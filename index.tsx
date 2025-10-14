@@ -20,12 +20,17 @@ interface User {
   passwordChangedAt?: string;
   dateOfBirth?: string;
   position?: string;
-  title?: string;
+  title?: string; // This will now store the ID of the title
   practiceCertificateNumber?: string;
   practiceCertificateIssueDate?: string;
   isSuspended?: boolean;
 }
 type NewUser = Omit<User, 'id'>;
+
+interface Title {
+    id: number;
+    name: string;
+}
 
 interface Certificate {
   id: number;
@@ -34,6 +39,7 @@ interface Certificate {
   date: string;
   credits: number;
   image: string;
+  imageId: string;
   updatedAt?: string;
   imageOrientation?: number;
 }
@@ -65,6 +71,21 @@ interface ReportData {
     groups?: ReportGroup[];
     detailedRows?: DetailedRowUser[];
 }
+
+// Helper function to format date strings for display (dd/mm/yyyy).
+const formatDateForDisplay = (dateString: string | null | undefined): string => {
+    if (!dateString) return 'Chưa cập nhật';
+    // The date constructor handles 'YYYY-MM-DD' and full ISO strings like '2023-10-27T00:00:00' correctly.
+    // We add 'T00:00:00' to treat 'YYYY-MM-DD' as a local date, then use UTC methods to prevent timezone shifts.
+    const date = new Date(dateString.includes('T') ? dateString : dateString + 'T00:00:00');
+    if (isNaN(date.getTime())) {
+        return 'Ngày không hợp lệ';
+    }
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
+};
 
 // ===================================================================================
 //
@@ -124,7 +145,7 @@ const api = {
     },
 
     // FETCH all initial data
-    fetchData: async (): Promise<{ users: User[], certificates: Certificate[], googleSheetUrl: string, googleFolderUrl: string, complianceStartYear: number }> => {
+    fetchData: async (): Promise<{ users: User[], certificates: Certificate[], titles: Title[], googleSheetUrl: string, googleFolderUrl: string, complianceStartYear: number }> => {
         return api.request('GET', 'fetchData');
     },
 
@@ -160,6 +181,7 @@ const api = {
         const payload = {
             id: Date.now(),
             userId,
+            userName, // Pass userName for logging
             name: certData.name,
             date: certData.date,
             credits: certData.credits,
@@ -177,8 +199,8 @@ const api = {
     updateCertificateOrientation: async (id: number, orientation: number): Promise<Certificate> => {
         return api.request('POST', 'updateCertificateOrientation', { id, orientation });
     },
-    deleteCertificate: async (id: number): Promise<number> => {
-        return api.request('POST', 'deleteCertificate', { id });
+    deleteCertificate: async (id: number, modifiedByUserId: number): Promise<number> => {
+        return api.request('POST', 'deleteCertificate', { id, modifiedByUserId });
     },
     
     // USERS
@@ -226,8 +248,9 @@ const normalizeText = (text: string): string => {
         .replace(/[\u0300-\u036f]/g, "");
 };
 
-const isUserCompliant = (user: User, credits: number): { compliant: boolean; required: number } => {
-    const isPharmacist = user.title && normalizeText(user.title).includes('duoc si');
+const isUserCompliant = (user: User, credits: number, titles: Title[]): { compliant: boolean; required: number } => {
+    const titleName = titles.find(t => String(t.id) === String(user.title))?.name || '';
+    const isPharmacist = titleName && normalizeText(titleName).includes('duoc si');
     const requiredCredits = isPharmacist ? 8 : 120;
     return {
         compliant: credits >= requiredCredits,
@@ -399,14 +422,18 @@ const EditCertificateModal = ({ certificate, onSave, onCancel }: { certificate: 
     };
     
     const applyExtractionResult = (result: any) => {
-        // Update form data only with fields that the AI found
-        setFormData(prev => ({
-            ...prev,
-            name: result.name || prev.name,
-            date: result.date || prev.date,
-            credits: result.credits ? String(result.credits) : prev.credits,
-        }));
-        setExtractionStatus('Đã trích xuất và cập nhật thông tin!');
+        if (result && (result.name || result.date || result.credits)) {
+            // Update form data only with fields that the AI found
+            setFormData(prev => ({
+                ...prev,
+                name: result.name || prev.name,
+                date: result.date || prev.date,
+                credits: result.credits ? String(result.credits) : prev.credits,
+            }));
+            setExtractionStatus('Đã trích xuất và cập nhật thông tin!');
+        } else {
+            setExtractionStatus('Tôi không thể lấy thông tin từ hình ảnh bạn cung cấp, vui lòng nhập thủ công');
+        }
     };
 
     const handleExtractFromNewImage = async () => {
@@ -434,12 +461,15 @@ const EditCertificateModal = ({ certificate, onSave, onCancel }: { certificate: 
     };
     
     const handleExtractFromCurrentImage = async () => {
-        if (!certificate.image) return;
+        if (!certificate.imageId) {
+            setExtractionStatus('Lỗi: Không tìm thấy ID hình ảnh cho chứng chỉ này.');
+            return;
+        }
         setIsExtractingCurrent(true);
         setExtractionStatus('Đang phân tích ảnh hiện tại...');
         try {
-            const result = await api.request('POST', 'extractFromImageUrl', {
-                imageUrl: certificate.image,
+            const result = await api.request('POST', 'extractFromImageId', {
+                imageId: certificate.imageId,
             });
             applyExtractionResult(result);
         } catch (error: any) {
@@ -453,6 +483,21 @@ const EditCertificateModal = ({ certificate, onSave, onCancel }: { certificate: 
     const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         setError('');
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0); // Set to midnight to compare dates only
+        const selectedDate = new Date(formData.date + 'T00:00:00'); // Ensure it's parsed as local midnight
+
+        if (selectedDate > today) {
+            setError("Ngày cấp không được lớn hơn ngày hiện tại.");
+            return;
+        }
+
+        if (selectedDate.getFullYear() < 2021) {
+            setError("Ngày cấp không được trước năm 2021.");
+            return;
+        }
+        
         if (!formData.name.trim() || !formData.date || !formData.credits.trim()) {
             setError("Vui lòng điền đầy đủ các trường bắt buộc: Tên chứng chỉ, Ngày cấp, Số tiết.");
             return;
@@ -525,7 +570,7 @@ const EditCertificateModal = ({ certificate, onSave, onCancel }: { certificate: 
                                 />
                             </div>
                         )}
-                         {extractionStatus && <p className={`extraction-status ${extractionStatus.startsWith('Lỗi') ? 'error' : ''}`}>{extractionStatus}</p>}
+                         {extractionStatus && <p className={`extraction-status ${extractionStatus.startsWith('Lỗi') || extractionStatus.startsWith('Tôi không thể') ? 'error' : ''}`}>{extractionStatus}</p>}
                     </div>
                     {error && <p className="error" style={{textAlign: 'left', minHeight: '0', marginBottom: '16px'}}>{error}</p>}
                     <div className="modal-actions">
@@ -617,18 +662,19 @@ const ChangePasswordModal = ({ onSave, onCancel, userId, isForced = false }: { o
 
 type ViewMode = 'grid' | 'list' | 'timeline';
 
-const MultiSelector = ({ allItems, selectedItems, onSelectionChange, placeholder }: { allItems: string[], selectedItems: string[], onSelectionChange: (items: string[]) => void, placeholder: string }) => {
+const MultiSelector = ({ allItems, selectedItems, onSelectionChange, placeholder, itemValue = 'id', itemLabel = 'name' }: { allItems: any[], selectedItems: string[], onSelectionChange: (items: string[]) => void, placeholder: string, itemValue?: string, itemLabel?: string }) => {
     const [isOpen, setIsOpen] = useState(false);
     const wrapperRef = useRef<HTMLDivElement>(null);
 
-    const handleItemToggle = (item: string) => {
-        const newSelection = selectedItems.includes(item)
-            ? selectedItems.filter(i => i !== item)
-            : [...selectedItems, item];
-        onSelectionChange(newSelection.sort());
+    const handleItemToggle = (item: any) => {
+        const value = String(item[itemValue]);
+        const newSelection = selectedItems.includes(value)
+            ? selectedItems.filter(i => i !== value)
+            : [...selectedItems, value];
+        onSelectionChange(newSelection);
     };
 
-    const handleSelectAll = () => { onSelectionChange(allItems); };
+    const handleSelectAll = () => { onSelectionChange(allItems.map(i => String(i[itemValue]))); };
     const handleDeselectAll = () => { onSelectionChange([]); };
     
     useEffect(() => {
@@ -641,7 +687,14 @@ const MultiSelector = ({ allItems, selectedItems, onSelectionChange, placeholder
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, [wrapperRef]);
 
-    const displayLabel = selectedItems.length === 0 ? `Tất cả (${placeholder})` : selectedItems.length === allItems.length ? `Tất cả (${placeholder})` : selectedItems.join(', ');
+    const displayLabel = useMemo(() => {
+        if (selectedItems.length === 0 || selectedItems.length === allItems.length) {
+            return `Tất cả (${placeholder})`;
+        }
+        return selectedItems
+            .map(sel => allItems.find(item => String(item[itemValue]) === sel)?.[itemLabel] || sel)
+            .join(', ');
+    }, [selectedItems, allItems, placeholder, itemValue, itemLabel]);
 
     return (
         <div className="multi-select-container" ref={wrapperRef}>
@@ -656,13 +709,13 @@ const MultiSelector = ({ allItems, selectedItems, onSelectionChange, placeholder
                         <button type="button" onClick={handleDeselectAll}>Bỏ chọn</button>
                     </div>
                     {allItems.map(item => (
-                        <label key={item}>
+                        <label key={item[itemValue]}>
                             <input
                                 type="checkbox"
-                                checked={selectedItems.includes(item)}
+                                checked={selectedItems.includes(String(item[itemValue]))}
                                 onChange={() => handleItemToggle(item)}
                             />
-                            {item}
+                            {item[itemLabel]}
                         </label>
                     ))}
                 </div>
@@ -687,7 +740,7 @@ const ProfileTab = ({ certificates, user, onDeleteCertificate, onUpdateCertifica
 
     const years = useMemo(() => {
         const allYears = userCertificates.map(c => new Date(c.date).getFullYear().toString());
-        return [...new Set(allYears)].sort((a, b) => Number(b) - Number(a));
+        return [...new Set(allYears)].sort((a, b) => Number(b) - Number(a)).map(y => ({ id: y, name: y }));
     }, [userCertificates]);
 
     const filteredCertificates = useMemo(() => {
@@ -768,7 +821,7 @@ const ProfileTab = ({ certificates, user, onDeleteCertificate, onUpdateCertifica
                                     <React.Fragment key={cert.id}>
                                         <tr onClick={() => setExpandedRowId(prev => (prev === cert.id ? null : cert.id))}>
                                             <td>{cert.name}</td>
-                                            <td>{cert.date ? new Date(cert.date + 'T00:00:00').toLocaleDateString('vi-VN') : ''}</td>
+                                            <td>{formatDateForDisplay(cert.date)}</td>
                                             <td>{cert.credits}</td>
                                             <td>
                                                 <div className="certificate-actions" style={{justifyContent: 'flex-start'}}>
@@ -811,7 +864,7 @@ const ProfileTab = ({ certificates, user, onDeleteCertificate, onUpdateCertifica
                                 <div className="timeline-dot"></div>
                                 <div className="timeline-item-content">
                                     <h3>{cert.name}</h3>
-                                    <p><strong>Ngày cấp:</strong> {cert.date ? new Date(cert.date + 'T00:00:00').toLocaleDateString('vi-VN') : ''}</p>
+                                    <p><strong>Ngày cấp:</strong> {formatDateForDisplay(cert.date)}</p>
                                     <p><strong>Số tiết:</strong> {cert.credits}</p>
                                 </div>
                             </div>
@@ -838,7 +891,7 @@ const ProfileTab = ({ certificates, user, onDeleteCertificate, onUpdateCertifica
                                 <div className="certificate-info">
                                     <h3>{cert.name}</h3>
                                     <p><strong>Số tiết:</strong> {cert.credits}</p>
-                                    <p><strong>Ngày cấp:</strong> {cert.date ? new Date(cert.date + 'T00:00:00').toLocaleDateString('vi-VN') : ''}</p>
+                                    <p><strong>Ngày cấp:</strong> {formatDateForDisplay(cert.date)}</p>
                                     <div className="certificate-actions">
                                         <button className="btn-icon" title="Sửa" onClick={(e) => handleEdit(e, cert)}><span className="material-icons">edit</span></button>
                                         <button className="btn-icon btn-delete" title="Xóa" onClick={(e) => handleDelete(e, cert.id, cert.name)}><span className="material-icons">delete</span></button>
@@ -984,11 +1037,15 @@ const DataEntryTab = ({ onAddCertificate }: { onAddCertificate: (cert: NewCertif
                 imageType: file.type,
             });
 
-            if (result.name) setName(result.name);
-            if (result.date) setDate(result.date);
-            if (result.credits) setCredits(String(result.credits));
+            if (result && (result.name || result.date || result.credits)) {
+                if (result.name) setName(result.name);
+                if (result.date) setDate(result.date);
+                if (result.credits) setCredits(String(result.credits));
+                setStatusMessage('Đã trích xuất thông tin thành công!');
+            } else {
+                 setStatusMessage('Tôi không thể lấy thông tin từ hình ảnh bạn cung cấp, vui lòng nhập thủ công');
+            }
 
-            setStatusMessage('Đã trích xuất thông tin thành công!');
         } catch (error: any) {
             console.error("AI Extraction Error:", error);
             setStatusMessage(error.message || 'Lỗi: Không thể trích xuất thông tin. Vui lòng nhập thủ công.');
@@ -1084,6 +1141,20 @@ const DataEntryTab = ({ onAddCertificate }: { onAddCertificate: (cert: NewCertif
         e.preventDefault();
         setStatusMessage(''); // Clear message on new submission attempt
 
+        const today = new Date();
+        today.setHours(0, 0, 0, 0); // Set to midnight to compare dates only
+        const selectedDate = new Date(date + 'T00:00:00'); // Ensure it's parsed as local midnight
+
+        if (selectedDate > today) {
+            setStatusMessage('Lỗi: Ngày cấp không được lớn hơn ngày hiện tại.');
+            return;
+        }
+
+        if (selectedDate.getFullYear() < 2021) {
+            setStatusMessage('Lỗi: Ngày cấp không được trước năm 2021.');
+            return;
+        }
+
         if (!name.trim() || !date || !credits.trim() || !imageFile) {
             setStatusMessage('Lỗi: Vui lòng điền đầy đủ thông tin và chọn hình ảnh chứng chỉ.');
             return;
@@ -1145,7 +1216,7 @@ const DataEntryTab = ({ onAddCertificate }: { onAddCertificate: (cert: NewCertif
                             />
                         </div>
                     )}
-                    {statusMessage && <p className={`extraction-status ${statusMessage.startsWith('Lỗi') ? 'error' : ''}`}>{statusMessage}</p>}
+                    {statusMessage && <p className={`extraction-status ${statusMessage.startsWith('Lỗi') || statusMessage.startsWith('Tôi không thể') ? 'error' : ''}`}>{statusMessage}</p>}
                 </div>
                  <div className="form-group">
                     <label htmlFor="cert-name">Tên chứng chỉ</label>
@@ -1323,9 +1394,218 @@ const AIAssistantTab = ({ certificates, users }: { certificates: Certificate[], 
 };
 
 
+const InspectionView = ({ users, certificates, user, onUpdateCertificate, onDeleteCertificate }: {
+    users: User[];
+    certificates: Certificate[];
+    user: User;
+    onUpdateCertificate: (cert: Certificate, newImageFile?: File, newImageOrientation?: number) => void;
+    onDeleteCertificate: (id: number) => void;
+}) => {
+    const [selectedUser, setSelectedUser] = useState<User | null>(null);
+    const [searchTerm, setSearchTerm] = useState('');
+    const [suggestions, setSuggestions] = useState<User[]>([]);
+    const [isSuggestionsVisible, setIsSuggestionsVisible] = useState(false);
+    const [expandedCertId, setExpandedCertId] = useState<number | null>(null);
+    const [editingCertificate, setEditingCertificate] = useState<Certificate | null>(null);
+    const [confirmation, setConfirmation] = useState<{message: string, onConfirm: () => void} | null>(null);
+    const searchRef = useRef<HTMLDivElement>(null);
+
+    const allUserEmployees = useMemo(() => {
+        return users
+            .filter(u => u.role !== 'admin' && !u.isSuspended)
+            .sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+    }, [users]);
+    
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+                setIsSuggestionsVisible(false);
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+
+    const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const value = e.target.value;
+        setSearchTerm(value);
+
+        if (selectedUser && value !== selectedUser.name) {
+            setSelectedUser(null);
+            setExpandedCertId(null);
+        }
+
+        if (value.trim().length > 0) {
+            const normalizedSearch = normalizeText(value);
+            const filtered = allUserEmployees.filter(u => normalizeText(u.name).includes(normalizedSearch));
+            setSuggestions(filtered);
+            setIsSuggestionsVisible(true);
+        } else {
+            setSuggestions([]);
+            setIsSuggestionsVisible(false);
+        }
+    };
+
+    const handleSelectUser = (user: User) => {
+        setSelectedUser(user);
+        setSearchTerm(user.name);
+        setIsSuggestionsVisible(false);
+        setSuggestions([]);
+        setExpandedCertId(null);
+    };
+
+    const selectedUserCerts = useMemo(() => {
+        if (!selectedUser) return [];
+        return certificates
+            .filter(c => c.userId === selectedUser.id)
+            .sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
+    }, [certificates, selectedUser]);
+
+    const handleEdit = (e: React.MouseEvent, cert: Certificate) => {
+        e.stopPropagation();
+        setEditingCertificate(cert);
+    };
+
+    const handleDelete = (e: React.MouseEvent, certId: number, certName: string) => {
+        e.stopPropagation();
+        setConfirmation({
+            message: `Bạn có chắc chắn muốn xóa chứng chỉ "${certName}" của ${selectedUser?.name} không?`,
+            onConfirm: () => {
+                onDeleteCertificate(certId);
+                setConfirmation(null);
+            }
+        });
+    };
+
+    const handleSaveCertificate = (updatedCert: Certificate, newImageFile?: File, newImageOrientation?: number) => {
+        onUpdateCertificate(updatedCert, newImageFile, newImageOrientation);
+        setEditingCertificate(null);
+    };
+    
+    return (
+        <div className="inspection-view-container">
+            <div className="inspection-search-container" ref={searchRef}>
+                <label htmlFor="inspection-search">Tìm kiếm nhân viên</label>
+                <div className="search-input-wrapper">
+                    <input
+                        id="inspection-search"
+                        type="search"
+                        placeholder="Gõ tên để tìm..."
+                        value={searchTerm}
+                        onChange={handleSearchChange}
+                        onFocus={() => { if (searchTerm && suggestions.length > 0) setIsSuggestionsVisible(true); }}
+                        className="admin-search-input"
+                        autoComplete="off"
+                    />
+                     {isSuggestionsVisible && suggestions.length > 0 && (
+                        <ul className="inspection-suggestions-list">
+                            {suggestions.map(userSuggestion => (
+                                <li key={userSuggestion.id} onMouseDown={() => handleSelectUser(userSuggestion)}>
+                                    <span>{userSuggestion.name}</span>
+                                    <small>{userSuggestion.department}</small>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            </div>
+
+            <div className="inspection-content-result">
+                {!selectedUser && (
+                    <div className="no-results">
+                        <p>Gõ vào ô tìm kiếm và chọn một nhân viên để xem chứng chỉ.</p>
+                    </div>
+                )}
+                {selectedUser && (
+                    <>
+                        <h4>Chứng chỉ của: {selectedUser.name}</h4>
+                        {selectedUserCerts.length > 0 ? (
+                            <table className="report-table">
+                                <thead>
+                                    <tr>
+                                        <th>STT</th>
+                                        <th>Tên chứng chỉ</th>
+                                        <th>Ngày cấp</th>
+                                        <th>Số tiết</th>
+                                        {user.role === 'admin' && <th>Hành động</th>}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {selectedUserCerts.map((cert, index) => (
+                                        <React.Fragment key={cert.id}>
+                                            <tr
+                                                onClick={() => cert.image && setExpandedCertId(prev => prev === cert.id ? null : cert.id)}
+                                                className={cert.image ? 'clickable-row' : ''}
+                                                aria-expanded={expandedCertId === cert.id}
+                                                aria-controls={`cert-image-${cert.id}`}
+                                            >
+                                                <td data-label="STT">{index + 1}</td>
+                                                <td data-label="Tên chứng chỉ">{cert.name}</td>
+                                                <td data-label="Ngày cấp">{formatDateForDisplay(cert.date)}</td>
+                                                <td data-label="Số tiết">{cert.credits}</td>
+                                                {user.role === 'admin' && (
+                                                    <td data-label="Hành động">
+                                                        <div className="certificate-actions" style={{ justifyContent: 'flex-start', gap: '8px' }}>
+                                                            <button className="btn-icon" title="Sửa" onClick={(e) => handleEdit(e, cert)}>
+                                                                <span className="material-icons">edit</span>
+                                                            </button>
+                                                            <button className="btn-icon btn-delete" title="Xóa" onClick={(e) => handleDelete(e, cert.id, cert.name)}>
+                                                                <span className="material-icons">delete</span>
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                )}
+                                            </tr>
+                                            {expandedCertId === cert.id && (
+                                                <tr className="expanded-image-row" id={`cert-image-${cert.id}`}>
+                                                    <td colSpan={user.role === 'admin' ? 5 : 4}>
+                                                        <div className="expanded-image">
+                                                            <img
+                                                                src={cert.image || 'https://via.placeholder.com/600x400.png?text=Kh%C3%B4ng+th%E1%BB%83+t%E1%BA%A3i+%E1%BA%A3nh'}
+                                                                alt={cert.name}
+                                                                style={{ transform: `rotate(${getRotationFromExif(cert.imageOrientation)}deg)` }}
+                                                                onError={(e) => {
+                                                                    const target = e.target as HTMLImageElement;
+                                                                    target.onerror = null;
+                                                                    target.src='https://via.placeholder.com/600x400.png?text=Kh%C3%B4ng+th%E1%BB%83+t%E1%BA%A3i+%E1%BA%A3nh';
+                                                                }}
+                                                            />
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </React.Fragment>
+                                    ))}
+                                </tbody>
+                            </table>
+                        ) : (
+                            <div className="no-results">
+                                <p>Nhân viên này chưa có chứng chỉ nào.</p>
+                            </div>
+                        )}
+                    </>
+                )}
+            </div>
+             {editingCertificate && (
+                <EditCertificateModal
+                    certificate={editingCertificate}
+                    onSave={handleSaveCertificate}
+                    onCancel={() => setEditingCertificate(null)}
+                />
+            )}
+            {confirmation && (
+                <ConfirmationModal
+                    message={confirmation.message}
+                    onConfirm={confirmation.onConfirm}
+                    onCancel={() => setConfirmation(null)}
+                />
+            )}
+        </div>
+    );
+};
 
 
-const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDeleteCertificate, onUpdateCertificateOrientation, complianceStartYear }: { 
+const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDeleteCertificate, onUpdateCertificateOrientation, complianceStartYear, titles }: { 
     certificates: Certificate[], 
     users: User[],
     user: User,
@@ -1333,6 +1613,7 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
     onDeleteCertificate: (id: number) => void,
     onUpdateCertificateOrientation: (certId: number, orientation: number) => void,
     complianceStartYear: number;
+    titles: Title[];
 }) => {
     const chartRef = useRef<HTMLCanvasElement | null>(null);
     const chartInstance = useRef<Chart | null>(null);
@@ -1343,16 +1624,18 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
     const [reportYears, setReportYears] = useState<string[]>([new Date().getFullYear().toString()]);
     const [reportDepartments, setReportDepartments] = useState<string[]>([]);
     const [reportDepartmentYears, setReportDepartmentYears] = useState<string[]>([]);
+    const [reportTitles, setReportTitles] = useState<string[]>([]);
+    const [reportTitleYears, setReportTitleYears] = useState<string[]>([]);
     const [sortConfig, setSortConfig] = useState<{ key: string | null; direction: 'ascending' | 'descending' }>({ key: null, direction: 'ascending' });
     const [activeSubTab, setActiveSubTab] = useState('reporting');
 
     const allYears = useMemo(() => {
         const certYears = certificates.map(c => new Date(c.date).getFullYear().toString());
-        return [...new Set(certYears)].sort((a, b) => Number(b) - Number(a));
+        return [...new Set(certYears)].sort((a, b) => Number(b) - Number(a)).map(y => ({ id: y, name: y }));
     }, [certificates]);
 
     const allUserEmployees = useMemo(() => users.filter(u => u.role !== 'admin' && u.role !== 'reporter' && !u.isSuspended), [users]);
-    const allDepartments = useMemo(() => [...new Set(allUserEmployees.map(u => u.department).filter(Boolean))].sort(), [allUserEmployees]);
+    const allDepartments = useMemo(() => [...new Set(allUserEmployees.map(u => u.department).filter(Boolean))].sort().map(d => ({ id: d, name: d })), [allUserEmployees]);
     
      useEffect(() => {
         if (!chartRef.current || activeSubTab !== 'reporting') return;
@@ -1403,20 +1686,35 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
 
     }, [certificates, chartYear, chartType, allUserEmployees, activeSubTab]);
     
+    const getTitleNameById = useCallback((id: string | undefined) => {
+        return titles.find(t => String(t.id) === String(id))?.name || 'Chưa cập nhật';
+    }, [titles]);
+
     // Stats Cards Data
     const totalUsers = allUserEmployees.length;
     const totalCertificates = certificates.length;
     // FIX: Ensure credits are treated as numbers in the reduce function to prevent type errors.
     const averageCredits = totalUsers > 0 ? (certificates.reduce((sum, c) => sum + Number(c.credits || 0), 0) / totalUsers).toFixed(1) : 0;
+    
+    const complianceCycleEndYear = complianceStartYear + 4;
+
     const complianceRate = useMemo(() => {
         if (totalUsers === 0) return '0%';
-        const certsInYear = certificates.filter(c => new Date(c.date).getFullYear() === chartYear);
+        const startYear = complianceStartYear;
+        const endYear = startYear + 4;
+
+        const certsInCycle = certificates.filter(c => {
+            const certYear = new Date(c.date).getFullYear();
+            return certYear >= startYear && certYear <= endYear;
+        });
+
         const compliantUsers = allUserEmployees.filter(user => {
-            const userCredits = certsInYear.filter(c => c.userId === user.id).reduce((sum, c) => sum + Number(c.credits || 0), 0);
-            return isUserCompliant(user, userCredits).compliant;
+            const userCredits = certsInCycle.filter(c => c.userId === user.id).reduce((sum, c) => sum + Number(c.credits || 0), 0);
+            return isUserCompliant(user, userCredits, titles).compliant;
         }).length;
+
         return `${((compliantUsers / totalUsers) * 100).toFixed(0)}%`;
-    }, [chartYear, certificates, allUserEmployees, totalUsers]);
+    }, [complianceStartYear, certificates, allUserEmployees, totalUsers, titles]);
 
 
     const generateReport = (type: string, options: any) => {
@@ -1437,9 +1735,9 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
                     const totalCredits = certsInCycle
                         .filter(c => c.userId === user.id)
                         .reduce((sum, c) => sum + Number(c.credits || 0), 0);
-                    const { compliant, required } = isUserCompliant(user, totalCredits);
+                    const { compliant, required } = isUserCompliant(user, totalCredits, titles);
                     const status = compliant ? 'Đạt' : 'Chưa đạt';
-                    return [user.name, user.title || '', totalCredits, required, status];
+                    return [user.name, getTitleNameById(user.title), totalCredits, required, status];
                 });
                 break;
             }
@@ -1494,7 +1792,7 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
                 }
                 const yearFilterActive = options.years && options.years.length > 0;
                 let yearTitle = yearFilterActive ? ` (Năm: ${options.years.join(', ')})` : ' (Tất cả các năm)';
-                reportData.title = `Báo cáo theo Khoa/Phòng: ${options.departments.join(', ')}${yearTitle}`;
+                reportData.title = `Báo cáo theo Khoa/Phòng: ${options.departments.map((d:string) => allDepartments.find(ad => ad.id === d)?.name).join(', ')}${yearTitle}`;
                 reportData.headers = ['Họ tên', 'Tổng số tiết'];
 
                 const relevantCerts = yearFilterActive
@@ -1511,6 +1809,41 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
                     });
                     return { groupTitle: dept, rows: deptRows };
                 });
+                reportData.rows = undefined;
+                break;
+            }
+            case 'title_detail': {
+                 if (!options.titles || options.titles.length === 0) {
+                    alert('Vui lòng chọn ít nhất một chức danh.'); return;
+                }
+                const yearFilterActive = options.years && options.years.length > 0;
+                let yearTitle = yearFilterActive ? ` (Năm: ${options.years.join(', ')})` : ' (Tất cả các năm)';
+                const titleNames = options.titles.map((tid: string) => getTitleNameById(tid)).join(', ');
+                reportData.title = `Báo cáo chi tiết theo Chức danh: ${titleNames}${yearTitle}`;
+                reportData.headers = ['Họ tên', 'Tên chứng chỉ', 'Số tiết', 'Tổng tiết'];
+
+                const relevantUsers = allUserEmployees.filter(u => options.titles.includes(String(u.title)));
+                const relevantCerts = yearFilterActive
+                    ? certificates.filter(c => options.years.includes(new Date(c.date).getFullYear().toString()))
+                    : certificates;
+
+                const detailedRows: DetailedRowUser[] = [];
+                const sortedUsers = [...relevantUsers].sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+
+                sortedUsers.forEach(user => {
+                    const userCerts = relevantCerts
+                        .filter(c => c.userId === user.id)
+                        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+                    if (userCerts.length > 0) {
+                        detailedRows.push({
+                            name: user.name,
+                            totalCredits: userCerts.reduce((sum, c) => sum + Number(c.credits || 0), 0),
+                            certificates: userCerts.map(cert => ({ name: cert.name, credits: cert.credits }))
+                        });
+                    }
+                });
+                reportData.detailedRows = detailedRows;
                 reportData.rows = undefined;
                 break;
             }
@@ -1845,210 +2178,6 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
         </div>);
     };
 
-    const InspectionView = () => {
-        const [selectedUser, setSelectedUser] = useState<User | null>(null);
-        const [searchTerm, setSearchTerm] = useState('');
-        const [suggestions, setSuggestions] = useState<User[]>([]);
-        const [isSuggestionsVisible, setIsSuggestionsVisible] = useState(false);
-        const [expandedCertId, setExpandedCertId] = useState<number | null>(null);
-        const [editingCertificate, setEditingCertificate] = useState<Certificate | null>(null);
-        const [confirmation, setConfirmation] = useState<{message: string, onConfirm: () => void} | null>(null);
-        const searchRef = useRef<HTMLDivElement>(null);
-    
-        const allUserEmployees = useMemo(() => {
-            return users
-                .filter(u => u.role !== 'admin' && !u.isSuspended)
-                .sort((a, b) => a.name.localeCompare(b.name, 'vi'));
-        }, [users]);
-        
-        useEffect(() => {
-            const handleClickOutside = (event: MouseEvent) => {
-                if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
-                    setIsSuggestionsVisible(false);
-                }
-            };
-            document.addEventListener("mousedown", handleClickOutside);
-            return () => document.removeEventListener("mousedown", handleClickOutside);
-        }, []);
-    
-        const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-            const value = e.target.value;
-            setSearchTerm(value);
-
-            if (selectedUser && value !== selectedUser.name) {
-                setSelectedUser(null);
-                setExpandedCertId(null);
-            }
-
-            if (value.trim().length > 0) {
-                const normalizedSearch = normalizeText(value);
-                const filtered = allUserEmployees.filter(u => normalizeText(u.name).includes(normalizedSearch));
-                setSuggestions(filtered);
-                setIsSuggestionsVisible(true);
-            } else {
-                setSuggestions([]);
-                setIsSuggestionsVisible(false);
-            }
-        };
-    
-        const handleSelectUser = (user: User) => {
-            setSelectedUser(user);
-            setSearchTerm(user.name);
-            setIsSuggestionsVisible(false);
-            setSuggestions([]);
-            setExpandedCertId(null);
-        };
-    
-        const selectedUserCerts = useMemo(() => {
-            if (!selectedUser) return [];
-            return certificates
-                .filter(c => c.userId === selectedUser.id)
-                .sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
-        }, [certificates, selectedUser]);
-
-        const handleEdit = (e: React.MouseEvent, cert: Certificate) => {
-            e.stopPropagation();
-            setEditingCertificate(cert);
-        };
-
-        const handleDelete = (e: React.MouseEvent, certId: number, certName: string) => {
-            e.stopPropagation();
-            setConfirmation({
-                message: `Bạn có chắc chắn muốn xóa chứng chỉ "${certName}" của ${selectedUser?.name} không?`,
-                onConfirm: () => {
-                    onDeleteCertificate(certId);
-                    setConfirmation(null);
-                }
-            });
-        };
-
-        const handleSaveCertificate = (updatedCert: Certificate, newImageFile?: File, newImageOrientation?: number) => {
-            onUpdateCertificate(updatedCert, newImageFile, newImageOrientation);
-            setEditingCertificate(null);
-        };
-        
-        return (
-            <div className="inspection-view-container">
-                <div className="inspection-search-container" ref={searchRef}>
-                    <label htmlFor="inspection-search">Tìm kiếm nhân viên</label>
-                    <div className="search-input-wrapper">
-                        <input
-                            id="inspection-search"
-                            type="search"
-                            placeholder="Gõ tên để tìm..."
-                            value={searchTerm}
-                            onChange={handleSearchChange}
-                            onFocus={() => { if (searchTerm && suggestions.length > 0) setIsSuggestionsVisible(true); }}
-                            className="admin-search-input"
-                            autoComplete="off"
-                        />
-                         {isSuggestionsVisible && suggestions.length > 0 && (
-                            <ul className="inspection-suggestions-list">
-                                {suggestions.map(userSuggestion => (
-                                    <li key={userSuggestion.id} onMouseDown={() => handleSelectUser(userSuggestion)}>
-                                        <span>{userSuggestion.name}</span>
-                                        <small>{userSuggestion.department}</small>
-                                    </li>
-                                ))}
-                            </ul>
-                        )}
-                    </div>
-                </div>
-    
-                <div className="inspection-content-result">
-                    {!selectedUser && (
-                        <div className="no-results">
-                            <p>Gõ vào ô tìm kiếm và chọn một nhân viên để xem chứng chỉ.</p>
-                        </div>
-                    )}
-                    {selectedUser && (
-                        <>
-                            <h4>Chứng chỉ của: {selectedUser.name}</h4>
-                            {selectedUserCerts.length > 0 ? (
-                                <table className="report-table">
-                                    <thead>
-                                        <tr>
-                                            <th>STT</th>
-                                            <th>Tên chứng chỉ</th>
-                                            <th>Ngày cấp</th>
-                                            <th>Số tiết</th>
-                                            {user.role === 'admin' && <th>Hành động</th>}
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {selectedUserCerts.map((cert, index) => (
-                                            <React.Fragment key={cert.id}>
-                                                <tr
-                                                    onClick={() => cert.image && setExpandedCertId(prev => prev === cert.id ? null : cert.id)}
-                                                    className={cert.image ? 'clickable-row' : ''}
-                                                    aria-expanded={expandedCertId === cert.id}
-                                                    aria-controls={`cert-image-${cert.id}`}
-                                                >
-                                                    <td data-label="STT">{index + 1}</td>
-                                                    <td data-label="Tên chứng chỉ">{cert.name}</td>
-                                                    <td data-label="Ngày cấp">{cert.date ? new Date(cert.date + 'T00:00:00').toLocaleDateString('vi-VN') : ''}</td>
-                                                    <td data-label="Số tiết">{cert.credits}</td>
-                                                    {user.role === 'admin' && (
-                                                        <td data-label="Hành động">
-                                                            <div className="certificate-actions" style={{ justifyContent: 'flex-start', gap: '8px' }}>
-                                                                <button className="btn-icon" title="Sửa" onClick={(e) => handleEdit(e, cert)}>
-                                                                    <span className="material-icons">edit</span>
-                                                                </button>
-                                                                <button className="btn-icon btn-delete" title="Xóa" onClick={(e) => handleDelete(e, cert.id, cert.name)}>
-                                                                    <span className="material-icons">delete</span>
-                                                                </button>
-                                                            </div>
-                                                        </td>
-                                                    )}
-                                                </tr>
-                                                {expandedCertId === cert.id && (
-                                                    <tr className="expanded-image-row" id={`cert-image-${cert.id}`}>
-                                                        <td colSpan={user.role === 'admin' ? 5 : 4}>
-                                                            <div className="expanded-image">
-                                                                <img
-                                                                    src={cert.image || 'https://via.placeholder.com/600x400.png?text=Kh%C3%B4ng+th%E1%BB%83+t%E1%BA%A3i+%E1%BA%A3nh'}
-                                                                    alt={cert.name}
-                                                                    style={{ transform: `rotate(${getRotationFromExif(cert.imageOrientation)}deg)` }}
-                                                                    onError={(e) => {
-                                                                        const target = e.target as HTMLImageElement;
-                                                                        target.onerror = null;
-                                                                        target.src='https://via.placeholder.com/600x400.png?text=Kh%C3%B4ng+th%E1%BB%83+t%E1%BA%A3i+%E1%BA%A3nh';
-                                                                    }}
-                                                                />
-                                                            </div>
-                                                        </td>
-                                                    </tr>
-                                                )}
-                                            </React.Fragment>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            ) : (
-                                <div className="no-results">
-                                    <p>Nhân viên này chưa có chứng chỉ nào.</p>
-                                </div>
-                            )}
-                        </>
-                    )}
-                </div>
-                 {editingCertificate && (
-                    <EditCertificateModal
-                        certificate={editingCertificate}
-                        onSave={handleSaveCertificate}
-                        onCancel={() => setEditingCertificate(null)}
-                    />
-                )}
-                {confirmation && (
-                    <ConfirmationModal
-                        message={confirmation.message}
-                        onConfirm={confirmation.onConfirm}
-                        onCancel={() => setConfirmation(null)}
-                    />
-                )}
-            </div>
-        );
-    };
-
     return (
         <div>
             <h2>Báo cáo & Thống kê</h2>
@@ -2070,10 +2199,34 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
             {activeSubTab === 'reporting' && (
                 <div className="reporting-dashboard">
                     <div className="reporting-stats">
-                        <div className="stat-card"><h4>Tổng số người dùng</h4><p>{totalUsers}</p></div>
-                        <div className="stat-card"><h4>Tổng số chứng chỉ</h4><p>{totalCertificates}</p></div>
-                        <div className="stat-card"><h4>Số tiết trung bình</h4><p>{averageCredits}</p></div>
-                        <div className="stat-card"><h4>Tỷ lệ tuân thủ ({chartYear})</h4><p>{complianceRate}</p></div>
+                        <div className="colorful-stat-card card-green">
+                            <span className="material-icons stat-icon">groups</span>
+                            <div className="stat-content">
+                                <h4>Tổng số người dùng</h4>
+                                <p>{totalUsers}</p>
+                            </div>
+                        </div>
+                        <div className="colorful-stat-card card-yellow">
+                             <span className="material-icons stat-icon">workspace_premium</span>
+                            <div className="stat-content">
+                                <h4>Tổng số chứng chỉ</h4>
+                                <p>{totalCertificates}</p>
+                            </div>
+                        </div>
+                        <div className="colorful-stat-card card-blue">
+                            <span className="material-icons stat-icon">functions</span>
+                            <div className="stat-content">
+                                <h4>Số tiết trung bình</h4>
+                                <p>{averageCredits}</p>
+                            </div>
+                        </div>
+                        <div className="colorful-stat-card card-purple">
+                            <span className="material-icons stat-icon">check_circle</span>
+                             <div className="stat-content">
+                                <h4>Tỷ lệ tuân thủ ({complianceCycleEndYear})</h4>
+                                <p>{complianceRate}</p>
+                            </div>
+                        </div>
                     </div>
 
                     <aside className="reporting-controls-panel">
@@ -2095,6 +2248,12 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
                             <button onClick={() => generateReport('department', {departments: reportDepartments, years: reportDepartmentYears})}>Tạo</button>
                         </div>
                         <div className="report-form">
+                            <label>Báo cáo chi tiết theo Chức danh</label>
+                             <MultiSelector allItems={titles} selectedItems={reportTitles} onSelectionChange={setReportTitles} placeholder="Chức danh"/>
+                            <MultiSelector allItems={allYears} selectedItems={reportTitleYears} onSelectionChange={setReportTitleYears} placeholder="Năm (tùy chọn)"/>
+                            <button onClick={() => generateReport('title_detail', {titles: reportTitles, years: reportTitleYears})}>Tạo</button>
+                        </div>
+                        <div className="report-form">
                             <label>Báo cáo theo khoảng ngày</label>
                             <input type="date" id="report-from-date" />
                             <input type="date" id="report-to-date" />
@@ -2112,7 +2271,7 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
                                     <option value="pie">Biểu đồ tròn</option>
                                 </select>
                                 <select value={chartYear} onChange={e => setChartYear(parseInt(e.target.value))}>
-                                    {allYears.map(year => <option key={year} value={year}>{year}</option>)}
+                                    {allYears.map(year => <option key={year.id} value={year.id}>{year.name}</option>)}
                                 </select>
                             </div>
                         </div>
@@ -2124,12 +2283,20 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
                     </main>
                 </div>
             )}
-            {activeSubTab === 'inspection' && <InspectionView />}
+            {activeSubTab === 'inspection' && 
+                <InspectionView 
+                    users={users}
+                    certificates={certificates}
+                    user={user}
+                    onUpdateCertificate={onUpdateCertificate}
+                    onDeleteCertificate={onDeleteCertificate}
+                />
+            }
         </div>
     );
 };
 
-const UserModal = ({ user, onSave, onCancel, allDepartments, isSelfEdit = false }: { user: User | null, onSave: (data: NewUser, id?: number) => void, onCancel: () => void, allDepartments: string[], isSelfEdit?: boolean }) => {
+const UserModal = ({ user, onSave, onCancel, allDepartments, titles, isSelfEdit = false }: { user: User | null, onSave: (data: NewUser, id?: number) => void, onCancel: () => void, allDepartments: string[], titles: Title[], isSelfEdit?: boolean }) => {
     const [formData, setFormData] = useState({
         username: '', name: '', department: '', role: 'user' as 'user' | 'admin' | 'reporter' | 'reporter_user', password: '',
         dateOfBirth: '', position: '', title: '', practiceCertificateNumber: '', practiceCertificateIssueDate: '',
@@ -2221,7 +2388,12 @@ const UserModal = ({ user, onSave, onCancel, allDepartments, isSelfEdit = false 
                     </div>
                      <div className="form-group">
                         <label>Chức danh</label>
-                        <input type="text" name="title" value={formData.title} onChange={handleChange} />
+                        <select name="title" value={formData.title} onChange={handleChange}>
+                            <option value="">-- Chọn chức danh --</option>
+                            {titles.map(t => (
+                                <option key={t.id} value={t.id}>{t.name}</option>
+                            ))}
+                        </select>
                     </div>
                      <div className="form-group">
                         <label>Số CCHN</label>
@@ -2270,15 +2442,17 @@ const AdminTab = ({
     googleFolderUrl,
     complianceStartYear,
     onUpdateComplianceYear,
+    titles,
 }: { 
     users: User[], 
-    onAddUser: (user: NewUser) => void, 
-    onUpdateUser: (user: User) => void, 
-    onDeleteUser: (id: number) => void,
+    onAddUser: (user: NewUser) => Promise<void>, 
+    onUpdateUser: (user: User) => Promise<void>, 
+    onDeleteUser: (id: number) => Promise<void>,
     googleSheetUrl: string,
     googleFolderUrl: string,
     complianceStartYear: number,
     onUpdateComplianceYear: (year: number) => Promise<void>,
+    titles: Title[],
 }) => {
     const [activeAdminTab, setActiveAdminTab] = useState('users');
     const [isUserModalOpen, setIsUserModalOpen] = useState(false);
@@ -2474,6 +2648,7 @@ const AdminTab = ({
                 onSave={handleSaveUser}
                 onCancel={() => setIsUserModalOpen(false)}
                 allDepartments={allDepartments}
+                titles={titles}
             />
         )}
         {confirmation && (
@@ -2544,7 +2719,7 @@ const ApiStatusTab = () => {
 };
 
 
-const PersonalInfoTab = ({ user, certificates, onEdit, complianceStartYear }: { user: User, certificates: Certificate[], onEdit: () => void, complianceStartYear: number }) => {
+const PersonalInfoTab = ({ user, certificates, onEdit, complianceStartYear, titles }: { user: User, certificates: Certificate[], onEdit: () => void, complianceStartYear: number, titles: Title[] }) => {
     
     const complianceData = useMemo(() => {
         const startYear = complianceStartYear;
@@ -2556,7 +2731,7 @@ const PersonalInfoTab = ({ user, certificates, onEdit, complianceStartYear }: { 
         });
 
         const accumulatedCredits = relevantCerts.reduce((sum, cert) => sum + Number(cert.credits || 0), 0);
-        const { required } = isUserCompliant(user, accumulatedCredits);
+        const { required } = isUserCompliant(user, accumulatedCredits, titles);
         const remainingCredits = Math.max(0, required - accumulatedCredits);
         
         const formatNumber = (num: number) => Number.isInteger(num) ? num : num.toFixed(1);
@@ -2568,7 +2743,12 @@ const PersonalInfoTab = ({ user, certificates, onEdit, complianceStartYear }: { 
             requiredCredits: required,
             remainingCredits: formatNumber(remainingCredits)
         };
-    }, [user, certificates, complianceStartYear]);
+    }, [user, certificates, complianceStartYear, titles]);
+
+    const getTitleName = (id: string | undefined) => {
+        if (!id) return 'Chưa cập nhật';
+        return titles.find(t => String(t.id) === String(id))?.name || 'Không xác định';
+    };
 
 
     return (
@@ -2599,7 +2779,7 @@ const PersonalInfoTab = ({ user, certificates, onEdit, complianceStartYear }: { 
 
                     <div className="info-item">
                         <label>Ngày sinh</label>
-                        <p>{user.dateOfBirth ? new Date(user.dateOfBirth + 'T00:00:00').toLocaleDateString('vi-VN') : 'Chưa cập nhật'}</p>
+                        <p>{formatDateForDisplay(user.dateOfBirth)}</p>
                     </div>
                      <div className="info-item">
                         <label>Khoa/Phòng</label>
@@ -2612,7 +2792,7 @@ const PersonalInfoTab = ({ user, certificates, onEdit, complianceStartYear }: { 
                     </div>
                     <div className="info-item">
                         <label>Chức danh</label>
-                        <p>{user.title || 'Chưa cập nhật'}</p>
+                        <p>{getTitleName(user.title)}</p>
                     </div>
                      <div className="info-item info-item-full info-separator">
                         <hr />
@@ -2624,7 +2804,7 @@ const PersonalInfoTab = ({ user, certificates, onEdit, complianceStartYear }: { 
                     </div>
                      <div className="info-item">
                         <label>Ngày cấp CCHN</label>
-                        <p>{user.practiceCertificateIssueDate ? new Date(user.practiceCertificateIssueDate + 'T00:00:00').toLocaleDateString('vi-VN') : 'Chưa cập nhật'}</p>
+                        <p>{formatDateForDisplay(user.practiceCertificateIssueDate)}</p>
                     </div>
                 </div>
             </div>
@@ -2637,6 +2817,7 @@ interface MainAppProps {
     user: User;
     users: User[];
     certificates: Certificate[];
+    titles: Title[];
     onLogout: () => void;
     onAddCertificate: (cert: NewCertificatePayload) => Promise<void>;
     onUpdateCertificate: (cert: Certificate, newImageFile?: File, newImageOrientation?: number) => Promise<void>;
@@ -2653,7 +2834,7 @@ interface MainAppProps {
 }
 
 const MainApp = (props: MainAppProps) => {
-  const { user, users, certificates, onLogout, onAddCertificate, onUpdateCertificate, onUpdateCertificateOrientation, onDeleteCertificate, onAddUser, onUpdateUser, onDeleteUser, onChangePassword, googleSheetUrl, googleFolderUrl, complianceStartYear, onUpdateComplianceYear } = props;
+  const { user, users, certificates, titles, onLogout, onAddCertificate, onUpdateCertificate, onUpdateCertificateOrientation, onDeleteCertificate, onAddUser, onUpdateUser, onDeleteUser, onChangePassword, googleSheetUrl, googleFolderUrl, complianceStartYear, onUpdateComplianceYear } = props;
   const mainContentRef = useRef<HTMLElement>(null);
   const [activeTab, setActiveTab] = useState('personal_info');
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
@@ -2724,12 +2905,12 @@ const MainApp = (props: MainAppProps) => {
 
   const renderTabContent = () => {
     switch(activeTab) {
-      case 'personal_info': return <PersonalInfoTab user={user} certificates={certificates} onEdit={() => setIsEditUserModalOpen(true)} complianceStartYear={complianceStartYear} />;
+      case 'personal_info': return <PersonalInfoTab user={user} certificates={certificates} onEdit={() => setIsEditUserModalOpen(true)} complianceStartYear={complianceStartYear} titles={titles} />;
       case 'profile': return <ProfileTab certificates={certificates} user={user} onDeleteCertificate={onDeleteCertificate} onUpdateCertificate={onUpdateCertificate} onUpdateCertificateOrientation={onUpdateCertificateOrientation} />;
       case 'entry': return <DataEntryTab onAddCertificate={handleAddCertificateAndSwitchTab} />;
-      case 'reporting': return <ReportingTab certificates={certificates} users={users} user={user} onUpdateCertificate={onUpdateCertificate} onDeleteCertificate={onDeleteCertificate} onUpdateCertificateOrientation={onUpdateCertificateOrientation} complianceStartYear={complianceStartYear} />;
+      case 'reporting': return <ReportingTab certificates={certificates} users={users} user={user} onUpdateCertificate={onUpdateCertificate} onDeleteCertificate={onDeleteCertificate} onUpdateCertificateOrientation={onUpdateCertificateOrientation} complianceStartYear={complianceStartYear} titles={titles} />;
       case 'ai_assistant': return <AIAssistantTab certificates={certificates} users={users} />;
-      case 'admin': return <AdminTab users={users} onAddUser={onAddUser} onUpdateUser={onUpdateUser} onDeleteUser={onDeleteUser} googleSheetUrl={googleSheetUrl} googleFolderUrl={googleFolderUrl} complianceStartYear={complianceStartYear} onUpdateComplianceYear={onUpdateComplianceYear} />;
+      case 'admin': return <AdminTab users={users} onAddUser={onAddUser} onUpdateUser={onUpdateUser} onDeleteUser={onDeleteUser} googleSheetUrl={googleSheetUrl} googleFolderUrl={googleFolderUrl} complianceStartYear={complianceStartYear} onUpdateComplianceYear={onUpdateComplianceYear} titles={titles} />;
       default: return null;
     }
   };
@@ -2780,6 +2961,7 @@ const MainApp = (props: MainAppProps) => {
                 onSave={handleSaveCurrentUser}
                 onCancel={() => setIsEditUserModalOpen(false)}
                 allDepartments={allDepartments}
+                titles={titles}
                 isSelfEdit={true}
             />
         )}
@@ -2802,6 +2984,7 @@ const App = () => {
   
   const [users, setUsers] = useState<User[]>([]);
   const [certificates, setCertificates] = useState<Certificate[]>([]);
+  const [titles, setTitles] = useState<Title[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isForcePasswordChange, setIsForcePasswordChange] = useState(false);
@@ -2831,7 +3014,15 @@ const App = () => {
     // If the parsed date is valid, format it to 'YYYY-MM-DD'.
     // 'en-CA' locale provides this format and respects the local timezone of the browser.
     if (!isNaN(d.getTime())) {
-        return d.toLocaleDateString('en-CA');
+        try {
+            return d.toLocaleDateString('en-CA');
+        } catch(e) {
+            // Fallback for environments that don't support en-CA
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
     }
 
     // Fallback for non-standard date strings like DD/MM/YYYY which `new Date()` might misinterpret.
@@ -2903,6 +3094,14 @@ const App = () => {
         isSuspended: String(findProp(rawUser, ['trạngthái', 'trangthai', 'isSuspended']) || '').trim() === 'Tạm ngừng',
     };
   };
+  
+  const sanitizeTitle = (rawTitle: any): Title | null => {
+      if (!rawTitle) return null;
+      const id = findProp(rawTitle, ['id', 'ID']);
+      const name = findProp(rawTitle, ['name', 'Name']);
+      if (id === undefined || name === undefined) return null;
+      return { id: Number(id), name: String(name) };
+  };
 
   const sanitizeCertificate = (rawCert: any): Certificate | null => {
     if (!rawCert) return null;
@@ -2936,26 +3135,29 @@ const App = () => {
         date: parseDateToISO(String(findProp(rawCert, ['date', 'Date']) || '')),
         credits: isNaN(creditsParsed) ? 0 : creditsParsed,
         image: imageId ? `https://lh3.googleusercontent.com/d/${imageId}` : '',
+        imageId: imageId || '',
         imageOrientation: orientation ? parseInt(String(orientation), 10) : 1,
     };
   };
 
   const loadData = useCallback(async () => {
     try {
-        const { users: rawUsers, certificates: rawCertificates, googleSheetUrl, googleFolderUrl, complianceStartYear: startYearFromApi } = await api.fetchData();
+        const { users: rawUsers, certificates: rawCertificates, titles: rawTitles, googleSheetUrl, googleFolderUrl, complianceStartYear: startYearFromApi } = await api.fetchData();
         
         const sanitizedUsers = rawUsers.map(sanitizeUser).filter((u): u is User => u !== null);
         const sanitizedCertificates = rawCertificates.map(sanitizeCertificate).filter((c): c is Certificate => c !== null);
+        const sanitizedTitles = (rawTitles || []).map(sanitizeTitle).filter((t): t is Title => t !== null);
 
         setUsers(sanitizedUsers);
         setCertificates(sanitizedCertificates);
+        setTitles(sanitizedTitles);
         setGoogleSheetUrl(googleSheetUrl);
         setGoogleFolderUrl(googleFolderUrl);
         if (startYearFromApi) {
             setComplianceStartYear(startYearFromApi);
         }
         
-        return { sanitizedUsers, sanitizedCertificates };
+        return { sanitizedUsers, sanitizedCertificates, sanitizedTitles };
     } catch (error) {
         console.error("Failed to load data:", error);
         throw error;
@@ -3052,11 +3254,12 @@ const App = () => {
   }, [currentUser]);
 
   const handleUpdateCertificate = useCallback(async (updatedCert: Certificate, newImageFile?: File, newImageOrientation?: number) => {
+    if (!currentUser) return;
     setIsProcessing(true);
     try {
-        let payload: any = { ...updatedCert };
+        let payload: any = { ...updatedCert, modifiedByUserId: currentUser.id };
 
-        if (newImageFile && currentUser) {
+        if (newImageFile) {
             const imageBase64 = await api.fileToBase64(newImageFile);
             
             const now = new Date();
@@ -3106,9 +3309,10 @@ const App = () => {
   }, []);
 
   const handleDeleteCertificate = useCallback(async (id: number) => {
+    if (!currentUser) return;
     setIsProcessing(true);
     try {
-        const deletedId = await api.deleteCertificate(id);
+        const deletedId = await api.deleteCertificate(id, currentUser.id);
         setCertificates(prev => prev.filter(c => c.id !== deletedId));
     } catch (error: any) {
         console.error("Failed to delete certificate:", error);
@@ -3116,7 +3320,7 @@ const App = () => {
     } finally {
         setIsProcessing(false);
     }
-  }, []);
+  }, [currentUser]);
 
   const handleAddUser = useCallback(async (newUser: NewUser) => {
     setIsProcessing(true);
@@ -3247,6 +3451,7 @@ const App = () => {
               user={currentUser} 
               users={users}
               certificates={certificates}
+              titles={titles}
               onLogout={handleLogout}
               onAddCertificate={handleAddCertificate}
               onUpdateCertificate={handleUpdateCertificate}

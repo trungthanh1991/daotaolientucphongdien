@@ -966,24 +966,65 @@ nav.tabs li button.active::before {
     gap: 20px;
 }
 
-.stat-card {
-    background: var(--card-background);
+/* === NEW COLORFUL STAT CARDS === */
+.colorful-stat-card {
+    position: relative;
+    color: white;
     padding: 20px;
-    border-radius: var(--border-radius);
-    box-shadow: var(--shadow);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 120px;
+    transition: transform 0.3s ease;
+}
+.colorful-stat-card:hover {
+    transform: translateY(-5px);
 }
 
-.stat-card h4 {
-    font-size: 14px;
-    color: #6c757d;
+.stat-content {
+    position: relative;
+    z-index: 2;
+}
+
+.colorful-stat-card h4 {
+    font-size: 15px;
     font-weight: 500;
+    opacity: 0.9;
+    margin-bottom: 8px;
+    text-transform: uppercase;
 }
 
-.stat-card p {
-    font-size: 28px;
+.colorful-stat-card p {
+    font-size: 32px;
     font-weight: 700;
-    color: var(--primary-color);
+    margin: 0;
+    line-height: 1;
 }
+
+.stat-icon {
+    position: absolute;
+    bottom: -15px;
+    right: -10px;
+    font-size: 90px !important;
+    opacity: 0.2;
+    color: white;
+    z-index: 1;
+    transform: rotate(-15deg);
+    transition: transform 0.4s ease;
+}
+
+.colorful-stat-card:hover .stat-icon {
+    transform: rotate(-5deg) scale(1.1);
+}
+
+.card-green { background: linear-gradient(135deg, #28a745 0%, #20c997 100%); }
+.card-yellow { background: linear-gradient(135deg, #ffc107 0%, #ffca2c 100%); }
+.card-blue { background: linear-gradient(135deg, #007bff 0%, #3698ff 100%); }
+.card-purple { background: linear-gradient(135deg, #6f42c1 0%, #8c5de6 100%); }
+
 
 .reporting-controls-panel {
     grid-row: 2 / 3;
@@ -1009,6 +1050,14 @@ nav.tabs li button.active::before {
     display: flex;
     flex-direction: column;
     gap: 12px;
+    /* NEW STYLES */
+    background-color: #f0f7f9; /* A light, calming color */
+    padding: 20px;
+    border-radius: var(--border-radius);
+    border: 1px solid #d0e0e5;
+    align-items: center; /* Center flex items */
+    text-align: center; /* Center inline content */
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
 }
 
 .report-form label {
@@ -1021,6 +1070,13 @@ nav.tabs li button.active::before {
     border-radius: 4px;
     border: 1px solid var(--border-color);
     font-size: 16px;
+}
+
+.report-form button,
+.report-form .multi-select-container,
+.report-form input[type="date"] {
+    width: 100%;
+    max-width: 280px;
 }
 
 .report-form button {

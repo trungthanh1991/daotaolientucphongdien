@@ -34,7 +34,7 @@
 <script>
 // ===================================================================================
 //
-//      GOOGLE APPS SCRIPT BACKEND (HYBRID FAST v4.2 - Self-healing Column)
+//      GOOGLE APPS SCRIPT BACKEND (HYBRID FAST v4.7 - Fallback API Key)
 //
 // ===================================================================================
 
@@ -65,15 +65,53 @@ function extractGoogleDriveId(urlOrId) {
 }
 
 // ===================================================================================
+// ✍️ GHI LOG
+// ===================================================================================
+function writeToLog(logData) {
+  try {
+    var logSheet = ss.getSheetByName("Log");
+    if (!logSheet) {
+      logSheet = ss.insertSheet("Log");
+      logSheet.appendRow(["Timestamp", "UserID", "UserName", "Action", "CertificateID", "CertificateName", "ImageURL"]);
+      logSheet.setFrozenRows(1);
+    }
+    
+    // Use a simple fallback instead of reading the whole user sheet for performance
+    var userName = logData.userName || "Không rõ";
+    if (!logData.userName && logData.userId) {
+       var users = sheetToObjectsFallback(userSheet);
+       var user = users.find(function(u) { return u.id == logData.userId; });
+       if (user) userName = user.name;
+    }
+
+    logSheet.appendRow([
+      new Date(),
+      logData.userId,
+      userName,
+      logData.action,
+      logData.certificateId,
+      logData.certificateName,
+      logData.imageUrl || ''
+    ]);
+  } catch (e) {
+    Logger.log("Lỗi ghi log: " + e.toString());
+    // Do not throw error to the user, logging is a background task
+  }
+}
+
+// ===================================================================================
 // ⚡️ ĐỌC DỮ LIỆU NHANH VỚI CACHE
 // ===================================================================================
 function getAllSheetsData() {
   const result = {};
-  ["Users","Certificates","PasswordRequests"].forEach(name => {
+  ["Users","Certificates","PasswordRequests","ChucDanh"].forEach(name => {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
     const lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
-    if (lastRow < 2) { result[name.toLowerCase()] = []; return; }
+    if (lastRow < 2) { 
+      result[name.toLowerCase()] = []; 
+      return; 
+    }
     const headers = normalizeHeaders(sh.getRange(1,1,1,lastCol).getValues()[0]);
     const data = sh.getRange(2,1,lastRow-1,lastCol).getValues();
     result[name.toLowerCase()] = data.map(r=>{
@@ -85,7 +123,7 @@ function getAllSheetsData() {
 
 function getData() {
   const cache = CacheService.getScriptCache();
-  const key = "dtlt_data_v4_fast";
+  const key = "dtlt_data_v5_fast";
   const cached = cache.get(key);
   if (cached) return JSON.parse(cached);
 
@@ -94,13 +132,19 @@ function getData() {
   const safeUsers = all.users.map(u=>{
     const c={...u}; delete c.password; return c;
   });
-  const out = { users: safeUsers, certificates: all.certificates, requests: all.passwordrequests };
+
+  const out = { 
+    users: safeUsers, 
+    certificates: all.certificates, 
+    requests: all.passwordrequests,
+    titles: all.chucdanh || []
+  };
 
   const s = JSON.stringify(out);
   if (s.length < 100*1024) cache.put(key, s, 300);
   return out;
 }
-function clearCache() { CacheService.getScriptCache().remove("dtlt_data_v4_fast"); }
+function clearCache() { CacheService.getScriptCache().remove("dtlt_data_v5_fast"); }
 
 // ===================================================================================
 // 📦 XỬ LÝ REQUEST (doGet, doPost)
@@ -109,7 +153,6 @@ function doGet(e){
   try{
     const data = getData();
     
-    // Đọc năm bắt đầu chu kỳ tuân thủ từ Sheet "Settings"
     let startYear;
     try {
       const settingsSheet = ss.getSheetByName("Settings");
@@ -123,7 +166,6 @@ function doGet(e){
       Logger.log("Không thể đọc 'Settings' sheet, sẽ dùng logic mặc định. Lỗi: " + err.message);
     }
     
-    // Nếu không có cài đặt, sử dụng logic tự động làm phương án dự phòng
     if (!startYear) {
       const currentYear = new Date().getFullYear();
       startYear = Math.floor((currentYear - 1) / 5) * 5 + 1;
@@ -148,7 +190,6 @@ function doPost(e){
     const { action, payload } = body;
     let result;
 
-    // Handler map for actions
     const actionHandlers = {
       'login': (p) => handleLogin(p.username, p.password),
       'changePassword': handleChangePassword,
@@ -157,13 +198,13 @@ function doPost(e){
       'deleteUser': (p) => handleDeleteUser(p.userId),
       'addCertificate': handleAddCertificate,
       'updateCertificate': handleUpdateCertificate,
-      'deleteCertificate': (p) => handleDeleteCertificate(p.id),
+      'deleteCertificate': handleDeleteCertificate,
       'updateCertificateOrientation': (p) => handleUpdateCertificateOrientation(p.id, p.orientation),
       'requestPasswordReset': (p) => handleRequestPasswordReset(p.username),
       'completePasswordReset': (p) => handleCompletePasswordReset(p.userId, p.newPass),
       'askAI': handleAskAI,
       'extractCertificateInfo': handleExtractCertificateInfo,
-      'extractFromImageUrl': handleExtractFromImageUrl,
+      'extractFromImageId': handleExtractFromImageId,
       'checkGeminiApi': handleCheckGeminiApi,
       'updateComplianceYear': handleUpdateComplianceYear
     };
@@ -174,7 +215,6 @@ function doPost(e){
       throw new Error("Action không hợp lệ: " + action);
     }
     
-    // Invalidate cache on write operations
     const writeActions = ['addCertificate', 'updateCertificate', 'deleteCertificate', 'addUser', 'updateUser', 'deleteUser', 'changePassword', 'completePasswordReset', 'updateComplianceYear', 'updateCertificateOrientation'];
     if (writeActions.includes(action)) {
       clearCache();
@@ -288,24 +328,24 @@ function handleDeleteUser(id){
 // 🎓 CERTIFICATE MANAGEMENT
 // ===================================================================================
 
-// NEW HELPER FUNCTION to ensure the orientation column exists
 function ensureCertOrientationColumn() {
   const headers = normalizeHeaders(certSheet.getRange(1, 1, 1, certSheet.getLastColumn()).getValues()[0]);
   if (headers.indexOf('imageorientation') === -1) {
     Logger.log("⚠️ Cột 'ImageOrientation' không tồn tại. Đang tự động tạo...");
-    // Add the header to the next available column
     certSheet.getRange(1, headers.length + 1).setValue('ImageOrientation');
-    // Important: Invalidate the cache because the sheet structure has changed
     clearCache();
     Logger.log("✅ Đã tạo thành công cột 'ImageOrientation'.");
   }
 }
 
 function handleAddCertificate(p){
+  if (p.date && new Date(p.date).getFullYear() < 2021) {
+    throw new Error("Ngày cấp không được trước năm 2021.");
+  }
   const lock=LockService.getScriptLock();
   if(!lock.tryLock(4000)) throw new Error("Hệ thống đang bận.");
   try{
-    ensureCertOrientationColumn(); // Ensure column exists before adding new data
+    ensureCertOrientationColumn();
     const blob=Utilities.newBlob(Utilities.base64Decode(p.imageBase64),p.imageType,p.imageName);
     const file=driveFolder.createFile(blob);
     const url=file.getUrl();
@@ -313,15 +353,28 @@ function handleAddCertificate(p){
     const headers=normalizeHeaders(certSheet.getRange(1,1,1,certSheet.getLastColumn()).getValues()[0]);
     const row=headers.map(h=>rec[h]||'');
     certSheet.appendRow(row);
+    
+    writeToLog({
+      userId: p.userId,
+      userName: p.userName,
+      action: 'thêm',
+      certificateId: rec.id,
+      certificateName: rec.name,
+      imageUrl: rec.image
+    });
+
     return rec;
   }finally{ lock.releaseLock(); }
 }
 
 function handleUpdateCertificate(p){
+  if (p.date && new Date(p.date).getFullYear() < 2021) {
+    throw new Error("Ngày cấp không được trước năm 2021.");
+  }
   const lock=LockService.getScriptLock();
   if(!lock.tryLock(4000)) throw new Error("Hệ thống đang bận.");
   try{
-    ensureCertOrientationColumn(); // Ensure column exists before updating
+    ensureCertOrientationColumn();
     const data=certSheet.getDataRange().getValues();
     const headers=normalizeHeaders(data[0]);
     const idCol=headers.indexOf('id');
@@ -339,8 +392,19 @@ function handleUpdateCertificate(p){
           if(p[h]!==undefined) row[idx]=p[h];
         });
         if(newUrl && imgCol>-1) row[imgCol]=newUrl;
-        if(newUrl && orientCol > -1) row[orientCol] = p.orientation || 1; // Reset orientation for new image
+        if(newUrl && orientCol > -1) row[orientCol] = p.orientation || 1;
         certSheet.getRange(i+1,1,1,row.length).setValues([row]);
+        
+        if (p.modifiedByUserId) {
+          writeToLog({
+            userId: p.modifiedByUserId,
+            action: 'sửa',
+            certificateId: p.id,
+            certificateName: p.name,
+            imageUrl: newUrl || p.image
+          });
+        }
+        
         return {...p,image:newUrl||p.image, imageorientation: p.orientation || 1};
       }
     }
@@ -348,15 +412,33 @@ function handleUpdateCertificate(p){
   }finally{ lock.releaseLock(); }
 }
 
-function handleDeleteCertificate(id){
+function handleDeleteCertificate(p){
+  const { id, modifiedByUserId } = p;
   const lock=LockService.getScriptLock();
   if(!lock.tryLock(3000)) throw new Error("Hệ thống đang bận.");
   try{
     const data=certSheet.getDataRange().getValues();
     const headers=normalizeHeaders(data[0]);
     const idCol=headers.indexOf('id');
+    const nameCol=headers.indexOf('name');
+    const imageCol=headers.indexOf('image');
+
     for(let i=data.length-1;i>0;i--){
-      if(data[i][idCol]==id){ certSheet.deleteRow(i+1); return id; }
+      if(data[i][idCol]==id){
+        
+        if (modifiedByUserId) {
+          writeToLog({
+            userId: modifiedByUserId,
+            action: 'xóa',
+            certificateId: data[i][idCol],
+            certificateName: data[i][nameCol],
+            imageUrl: data[i][imageCol]
+          });
+        }
+        
+        certSheet.deleteRow(i+1); 
+        return id; 
+      }
     }
     throw new Error("Không tìm thấy chứng chỉ để xóa.");
   }finally{ lock.releaseLock(); }
@@ -366,12 +448,11 @@ function handleUpdateCertificateOrientation(id, orientation) {
   const lock=LockService.getScriptLock();
   if(!lock.tryLock(3000)) throw new Error("Hệ thống đang bận.");
   try{
-    ensureCertOrientationColumn(); // Ensure column exists before updating
+    ensureCertOrientationColumn();
     const data = certSheet.getDataRange().getValues();
     const headers = normalizeHeaders(data[0]);
     const idCol = headers.indexOf('id');
     const orientCol = headers.indexOf('imageorientation');
-    // No need to check for orientCol === -1 because the helper function guarantees it exists.
     
     for (let i = 1; i < data.length; i++) {
       if (data[i][idCol] == id) {
@@ -447,13 +528,78 @@ function handleCompletePasswordReset(id,newPass){
 // ===================================================================================
 // 🤖 AI + GEMINI
 // ===================================================================================
-function callGeminiForExtraction(imageBase64, imageType) {
-  const API_KEY = PropertiesService.getScriptProperties().getProperty('API_KEY');
-  if (!API_KEY) throw new Error("Thiếu API Key Gemini.");
-  if (!imageBase64 || !imageType) throw new Error("Thiếu dữ liệu ảnh.");
+function callGemini(url, options) {
+  const res = UrlFetchApp.fetch(url, options);
+  const responseCode = res.getResponseCode();
 
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + API_KEY;
+  if (responseCode >= 400) {
+    const errorContent = res.getContentText();
+    let errorMessage = "Lỗi không xác định từ Gemini API.";
+    
+    try {
+      const errorJson = JSON.parse(errorContent);
+      if (responseCode === 429) {
+        errorMessage = "Hạn ngạch sử dụng tính năng AI miễn phí đã hết cho hôm nay. Vui lòng thử lại vào ngày mai hoặc nhập dữ liệu thủ công.";
+      } else if (errorJson.error && errorJson.error.message) {
+        errorMessage = "Lỗi từ Gemini API: " + errorJson.error.message;
+      } else {
+        errorMessage = "Lỗi từ Gemini API (Mã lỗi: " + responseCode + "): " + errorContent;
+      }
+    } catch (e) {
+      errorMessage = "Lỗi từ Gemini API (Mã lỗi: " + responseCode + "): " + errorContent;
+    }
+    
+    throw new Error(errorMessage);
+  }
   
+  return JSON.parse(res.getContentText());
+}
+
+function callGeminiWithFallback(endpoint, body) {
+  const API_KEY = PropertiesService.getScriptProperties().getProperty('API_KEY');
+  const API_KEY1 = PropertiesService.getScriptProperties().getProperty('API_KEY1');
+  const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/';
+
+  // 1. Try with primary API_KEY
+  if (API_KEY) {
+    try {
+      const url = BASE_URL + endpoint + '?key=' + API_KEY;
+      const options = { method: 'post', contentType: 'application/json', payload: JSON.stringify(body), muteHttpExceptions: true };
+      return callGemini(url, options);
+    } catch (e) {
+      Logger.log("Lỗi với API_KEY chính: " + e.message);
+      const errorMessage = e.message.toLowerCase();
+      const isRecoverableError = errorMessage.includes("quota") || errorMessage.includes("permission denied") || errorMessage.includes("api key not valid");
+      
+      if (isRecoverableError && API_KEY1) {
+        Logger.log("Thử lại với API_KEY1...");
+        // Fall through to try API_KEY1
+      } else {
+        throw e; // Re-throw unrecoverable error or if no fallback
+      }
+    }
+  }
+
+  // 2. Try with fallback API_KEY1
+  if (API_KEY1) {
+    try {
+      const url = BASE_URL + endpoint + '?key=' + API_KEY1;
+      const options = { method: 'post', contentType: 'application/json', payload: JSON.stringify(body), muteHttpExceptions: true };
+      return callGemini(url, options);
+    } catch (e) {
+      Logger.log("Lỗi với API_KEY1 (dự phòng): " + e.message);
+      throw e; // If fallback also fails, throw the error
+    }
+  }
+
+  throw new Error("Không có API Key nào của Gemini được cấu hình hoặc hợp lệ.");
+}
+
+
+function callGeminiForExtraction(imageBase64, imageType) {
+  if (!imageBase64 || !imageType) throw new Error("Thiếu dữ liệu ảnh.");
+  
+  const endpoint = 'models/gemini-2.5-flash:generateContent';
   const promptText = `Bạn là một chuyên gia trích xuất dữ liệu từ hình ảnh chứng chỉ. Nhiệm vụ của bạn là đọc hình ảnh và trả về một đối tượng JSON với các trường sau:
 - "name": Tên của khóa học hoặc chương trình đào tạo.
 - "date": Ngày cấp chứng chỉ, định dạng YYYY-MM-DD.
@@ -474,11 +620,9 @@ function callGeminiForExtraction(imageBase64, imageType) {
     }],
     generationConfig: { responseMimeType: "application/json" }
   };
+  
+  const data = callGeminiWithFallback(endpoint, body);
 
-  const res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', payload: JSON.stringify(body), muteHttpExceptions: true });
-  if (res.getResponseCode() >= 400) throw new Error(res.getContentText());
-
-  const data = JSON.parse(res.getContentText());
   const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
   return raw ? JSON.parse(raw) : {};
 }
@@ -487,35 +631,71 @@ function handleExtractCertificateInfo(p){
     return callGeminiForExtraction(p.imageBase64, p.imageType);
 }
 
-function handleExtractFromImageUrl(p) {
-    if (!p.imageUrl) throw new Error("Thiếu URL hình ảnh.");
-    try {
-        const imageBlob = UrlFetchApp.fetch(p.imageUrl).getBlob();
-        const base64Data = Utilities.base64Encode(imageBlob.getBytes());
-        const imageType = imageBlob.getContentType();
-        return callGeminiForExtraction(base64Data, imageType);
-    } catch (e) {
-        Logger.log("Lỗi khi fetch ảnh từ URL: " + e.toString());
-        throw new Error("Không thể tải hoặc xử lý ảnh từ URL được cung cấp.");
+function handleExtractFromImageId(p) {
+  if (!p.imageId) throw new Error("Thiếu ID hình ảnh.");
+  try {
+    const file = DriveApp.getFileById(p.imageId);
+    const imageBlob = file.getBlob();
+
+    const imageBytes = imageBlob.getBytes();
+    const byteSize = imageBytes.length;
+    if (byteSize > 10 * 1024 * 1024) { // 10 MB limit for extraction
+      throw new Error("Tệp hình ảnh quá lớn (lớn hơn 10MB). Vui lòng sử dụng ảnh có dung lượng nhỏ hơn.");
     }
+    
+    const imageType = imageBlob.getContentType();
+    if (!imageType || !imageType.startsWith('image/')) {
+        throw new Error("Tệp không phải là định dạng hình ảnh được hỗ trợ. Vui lòng chỉ sử dụng tệp JPG, PNG, GIF, WEBP.");
+    }
+    
+    const base64Data = Utilities.base64Encode(imageBytes);
+
+    return callGeminiForExtraction(base64Data, imageType);
+  } catch (e) {
+    Logger.log("Lỗi khi lấy ảnh từ Drive ID (" + p.imageId + "): " + e.toString());
+    const msg = e.message ? e.message.toLowerCase() : '';
+    
+    if (msg.includes('quá lớn') || msg.includes('không phải là định dạng hình ảnh')) {
+       throw e; 
+    }
+
+    if (msg.includes('not found') || msg.includes('no item with id')) {
+       throw new Error("Không tìm thấy tệp hình ảnh. Tệp có thể đã bị xóa khỏi Google Drive.");
+    }
+    if (msg.includes('permission') || msg.includes('access denied')) {
+       throw new Error("Không có quyền truy cập vào tệp hình ảnh. Vui lòng kiểm tra cài đặt chia sẻ của tệp trong Google Drive.");
+    }
+    if (msg.includes('convert') || msg.includes('unsupported')) {
+        throw new Error("Không thể chuyển đổi tệp. Vui lòng đảm bảo đây là tệp hình ảnh thực sự (JPG, PNG) và không phải là Google Doc hay Sheet.");
+    }
+    
+    throw new Error("Không thể tải hoặc xử lý ảnh từ Google Drive. Lỗi không xác định. Chi tiết: " + e.message);
+  }
 }
 
 
 function handleCheckGeminiApi(){
-  const API_KEY=PropertiesService.getScriptProperties().getProperty('API_KEY');
-  if(!API_KEY) throw new Error("Chưa cấu hình API Key Gemini.");
-  return {success:true,message:"Đã tìm thấy API Key Gemini."};
+  const API_KEY = PropertiesService.getScriptProperties().getProperty('API_KEY');
+  const API_KEY1 = PropertiesService.getScriptProperties().getProperty('API_KEY1');
+  
+  if(!API_KEY && !API_KEY1) {
+    throw new Error("Chưa cấu hình API Key nào của Gemini (API_KEY hoặc API_KEY1).");
+  }
+  
+  let messages = [];
+  if (API_KEY) messages.push("Đã tìm thấy API_KEY chính.");
+  if (API_KEY1) messages.push("Đã tìm thấy API_KEY1 dự phòng.");
+
+  return {success:true, message: messages.join(' ')};
 }
 
 function handleAskAI(p){
-  const API_KEY=PropertiesService.getScriptProperties().getProperty('API_KEY');
-  if(!API_KEY) throw new Error("Thiếu API Key Gemini.");
-  const url='https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+API_KEY;
+  const endpoint = 'models/gemini-2.5-flash:generateContent';
   const context='Bạn là trợ lý AI phân tích dữ liệu đào tạo nhân sự.\nDữ liệu gồm '+p.users.length+' người và '+p.certificates.length+' chứng chỉ.\nTrả lời ngắn gọn, tiếng Việt.';
   const body={contents:[{role:"user",parts:[{text:p.userMessage}]}],systemInstruction:{parts:[{text:context}]},generationConfig:{temperature:0.2,responseMimeType:"text/plain"}};
-  const res=UrlFetchApp.fetch(url,{method:'post',contentType:'application/json',payload:JSON.stringify(body),muteHttpExceptions:true});
-  if(res.getResponseCode()>=400) throw new Error(res.getContentText());
-  const data=JSON.parse(res.getContentText());
+  
+  const data = callGeminiWithFallback(endpoint, body);
+
   const ans=data?.candidates?.[0]?.content?.parts?.[0]?.text||"Không có phản hồi.";
   return ans;
 }
