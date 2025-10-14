@@ -34,7 +34,7 @@
 <script>
 // ===================================================================================
 //
-//      GOOGLE APPS SCRIPT BACKEND (HYBRID FAST v4.7 - Fallback API Key)
+//      GOOGLE APPS SCRIPT BACKEND (HYBRID FAST v5.0 - Phased Loading)
 //
 // ===================================================================================
 
@@ -48,7 +48,8 @@ if (!SPREADSHEET_ID || !FOLDER_ID)
 var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
 var userSheet = ss.getSheetByName("Users");
 var certSheet = ss.getSheetByName("Certificates");
-var requestSheet = ss.getSheetByName("PasswordRequests");
+var titleSheet = ss.getSheetByName("ChucDanh");
+var settingsSheet = ss.getSheetByName("Settings");
 var driveFolder = DriveApp.getFolderById(FOLDER_ID);
 
 // ===================================================================================
@@ -64,127 +65,98 @@ function extractGoogleDriveId(urlOrId) {
   return m ? m[0] : null;
 }
 
-// ===================================================================================
-// ✍️ GHI LOG
-// ===================================================================================
-function writeToLog(logData) {
-  try {
-    var logSheet = ss.getSheetByName("Log");
-    if (!logSheet) {
-      logSheet = ss.insertSheet("Log");
-      logSheet.appendRow(["Timestamp", "UserID", "UserName", "Action", "CertificateID", "CertificateName", "ImageURL"]);
-      logSheet.setFrozenRows(1);
-    }
-    
-    // Use a simple fallback instead of reading the whole user sheet for performance
-    var userName = logData.userName || "Không rõ";
-    if (!logData.userName && logData.userId) {
-       var users = sheetToObjectsFallback(userSheet);
-       var user = users.find(function(u) { return u.id == logData.userId; });
-       if (user) userName = user.name;
-    }
-
-    logSheet.appendRow([
-      new Date(),
-      logData.userId,
-      userName,
-      logData.action,
-      logData.certificateId,
-      logData.certificateName,
-      logData.imageUrl || ''
-    ]);
-  } catch (e) {
-    Logger.log("Lỗi ghi log: " + e.toString());
-    // Do not throw error to the user, logging is a background task
-  }
-}
-
-// ===================================================================================
-// ⚡️ ĐỌC DỮ LIỆU NHANH VỚI CACHE
-// ===================================================================================
-function getAllSheetsData() {
-  const result = {};
-  ["Users","Certificates","PasswordRequests","ChucDanh"].forEach(name => {
-    const sh = ss.getSheetByName(name);
-    if (!sh) return;
-    const lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
-    if (lastRow < 2) { 
-      result[name.toLowerCase()] = []; 
-      return; 
-    }
-    const headers = normalizeHeaders(sh.getRange(1,1,1,lastCol).getValues()[0]);
-    const data = sh.getRange(2,1,lastRow-1,lastCol).getValues();
-    result[name.toLowerCase()] = data.map(r=>{
-      const o={}; headers.forEach((h,i)=>o[h]=r[i]); return o;
-    });
+function sheetToObjects(sheet) {
+  if (!sheet) return [];
+  const lastRow = sheet.getLastRow(), lastCol = sheet.getLastColumn();
+  if (lastRow < 2) return [];
+  const headers = normalizeHeaders(sheet.getRange(1, 1, 1, lastCol).getValues()[0]);
+  const data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  return data.map(r => {
+    const o = {};
+    headers.forEach((h, i) => o[h] = r[i]);
+    return o;
   });
-  return result;
 }
 
-function getData() {
+// ===================================================================================
+// ⚡️ ĐỌC DỮ LIỆU NHANH (TÁCH BIỆT)
+// ===================================================================================
+function getInitialData() {
   const cache = CacheService.getScriptCache();
-  const key = "dtlt_data_v5_fast";
+  const key = "dtlt_initial_data_v1";
   const cached = cache.get(key);
   if (cached) return JSON.parse(cached);
 
-  Logger.log("🔄 Đọc dữ liệu từ Sheet...");
-  const all = getAllSheetsData();
-  const safeUsers = all.users.map(u=>{
-    const c={...u}; delete c.password; return c;
+  Logger.log("🔄 Đọc dữ liệu ban đầu từ Sheet...");
+
+  const users = sheetToObjects(userSheet);
+  const titles = sheetToObjects(titleSheet);
+  
+  const safeUsers = users.map(u => {
+    const safeUser = {...u};
+    delete safeUser.password;
+    return safeUser;
   });
 
-  const out = { 
-    users: safeUsers, 
-    certificates: all.certificates, 
-    requests: all.passwordrequests,
-    titles: all.chucdanh || []
+  const out = {
+    users: safeUsers,
+    titles: titles || []
   };
 
   const s = JSON.stringify(out);
-  if (s.length < 100*1024) cache.put(key, s, 300);
+  if (s.length < 100 * 1024) cache.put(key, s, 300);
   return out;
 }
-function clearCache() { CacheService.getScriptCache().remove("dtlt_data_v5_fast"); }
+
+function clearInitialCache() {
+  CacheService.getScriptCache().remove("dtlt_initial_data_v1");
+}
+
+function getSettings() {
+    let startYear;
+    try {
+        if (settingsSheet) {
+            const value = settingsSheet.getRange("B1").getValue();
+            if (value && !isNaN(parseInt(value, 10))) {
+                startYear = parseInt(value, 10);
+            }
+        }
+    } catch (err) {
+        Logger.log("Không thể đọc 'Settings' sheet. Lỗi: " + err.message);
+    }
+    
+    if (!startYear) {
+        const currentYear = new Date().getFullYear();
+        startYear = Math.floor((currentYear - 1) / 5) * 5 + 1;
+    }
+
+    return {
+        complianceStartYear: startYear,
+        googleSheetUrl: 'https://docs.google.com/spreadsheets/d/' + SPREADSHEET_ID + '/edit',
+        googleFolderUrl: 'https://drive.google.com/drive/folders/' + FOLDER_ID
+    };
+}
+
 
 // ===================================================================================
 // 📦 XỬ LÝ REQUEST (doGet, doPost)
 // ===================================================================================
-function doGet(e){
-  try{
-    const data = getData();
+function doGet(e) {
+  try {
+    const data = getInitialData();
+    const settings = getSettings();
+    const combinedData = {...data, ...settings};
     
-    let startYear;
-    try {
-      const settingsSheet = ss.getSheetByName("Settings");
-      if (settingsSheet) {
-        const value = settingsSheet.getRange("B1").getValue();
-        if (value && !isNaN(parseInt(value, 10))) {
-          startYear = parseInt(value, 10);
-        }
-      }
-    } catch (err) {
-      Logger.log("Không thể đọc 'Settings' sheet, sẽ dùng logic mặc định. Lỗi: " + err.message);
-    }
-    
-    if (!startYear) {
-      const currentYear = new Date().getFullYear();
-      startYear = Math.floor((currentYear - 1) / 5) * 5 + 1;
-    }
-    data.complianceStartYear = startYear;
-
-    data.googleSheetUrl = 'https://docs.google.com/spreadsheets/d/' + SPREADSHEET_ID + '/edit';
-    data.googleFolderUrl = 'https://drive.google.com/drive/folders/' + FOLDER_ID;
-    
-    return ContentService.createTextOutput(JSON.stringify({success:true, data:data}))
+    return ContentService.createTextOutput(JSON.stringify({ success: true, data: combinedData }))
       .setMimeType(ContentService.MimeType.JSON);
-  }catch(err){
-    Logger.log("Lỗi doGet: "+err.stack);
-    return ContentService.createTextOutput(JSON.stringify({success:false,message:err.message}))
+  } catch (err) {
+    Logger.log("Lỗi doGet: " + err.stack);
+    return ContentService.createTextOutput(JSON.stringify({ success: false, message: err.message }))
       .setMimeType(ContentService.MimeType.JSON);
   }
 }
 
-function doPost(e){
+function doPost(e) {
   try {
     const body = JSON.parse(e.postData.contents);
     const { action, payload } = body;
@@ -192,6 +164,7 @@ function doPost(e){
 
     const actionHandlers = {
       'login': (p) => handleLogin(p.username, p.password),
+      'fetchCertificates': handleFetchCertificates,
       'changePassword': handleChangePassword,
       'addUser': handleAddUser,
       'updateUser': handleUpdateUser,
@@ -200,8 +173,6 @@ function doPost(e){
       'updateCertificate': handleUpdateCertificate,
       'deleteCertificate': handleDeleteCertificate,
       'updateCertificateOrientation': (p) => handleUpdateCertificateOrientation(p.id, p.orientation),
-      'requestPasswordReset': (p) => handleRequestPasswordReset(p.username),
-      'completePasswordReset': (p) => handleCompletePasswordReset(p.userId, p.newPass),
       'askAI': handleAskAI,
       'extractCertificateInfo': handleExtractCertificateInfo,
       'extractFromImageId': handleExtractFromImageId,
@@ -215,9 +186,10 @@ function doPost(e){
       throw new Error("Action không hợp lệ: " + action);
     }
     
-    const writeActions = ['addCertificate', 'updateCertificate', 'deleteCertificate', 'addUser', 'updateUser', 'deleteUser', 'changePassword', 'completePasswordReset', 'updateComplianceYear', 'updateCertificateOrientation'];
+    // Clear cache only on write operations for relevant data
+    const writeActions = ['addUser', 'updateUser', 'deleteUser', 'changePassword', 'updateComplianceYear'];
     if (writeActions.includes(action)) {
-      clearCache();
+      clearInitialCache();
     }
 
     return ContentService.createTextOutput(JSON.stringify({ success: true, data: result }))
@@ -232,14 +204,31 @@ function doPost(e){
 // ===================================================================================
 // 👤 USER MANAGEMENT
 // ===================================================================================
-function handleLogin(username,password){
-  const users=sheetToObjectsFallback(userSheet);
-  const u=users.find(x=>x.username===username && String(x.password)===String(password));
-  if(!u) throw new Error("Tên đăng nhập hoặc mật khẩu không đúng.");
-  if(String(u['trạngthái']).trim()==='Tạm ngừng')
+function handleLogin(username, password) {
+  const users = sheetToObjects(userSheet);
+  const user = users.find(u => u.username === username && String(u.password) === String(password));
+  
+  if (!user) {
+    throw new Error("Tên đăng nhập hoặc mật khẩu không đúng.");
+  }
+  if (String(user['trạngthái']).trim() === 'Tạm ngừng') {
     throw new Error("Tài khoản bị tạm ngừng, vui lòng liên hệ quản trị viên.");
-  const safe={...u}; delete safe.password; return safe;
+  }
+  
+  const safeUser = {...user};
+  delete safeUser.password;
+  
+  // On successful login, return the user object AND the initial data payload
+  const initialData = getInitialData();
+  const settings = getSettings();
+  
+  return {
+    loggedInUser: safeUser,
+    ...initialData,
+    ...settings
+  };
 }
+
 
 function handleChangePassword(p){
   const {userId,oldPassword,newPassword}=p;
@@ -327,13 +316,16 @@ function handleDeleteUser(id){
 // ===================================================================================
 // 🎓 CERTIFICATE MANAGEMENT
 // ===================================================================================
+function handleFetchCertificates() {
+  Logger.log("Fetching certificates...");
+  return sheetToObjects(certSheet);
+}
 
 function ensureCertOrientationColumn() {
   const headers = normalizeHeaders(certSheet.getRange(1, 1, 1, certSheet.getLastColumn()).getValues()[0]);
   if (headers.indexOf('imageorientation') === -1) {
     Logger.log("⚠️ Cột 'ImageOrientation' không tồn tại. Đang tự động tạo...");
     certSheet.getRange(1, headers.length + 1).setValue('ImageOrientation');
-    clearCache();
     Logger.log("✅ Đã tạo thành công cột 'ImageOrientation'.");
   }
 }
@@ -354,14 +346,11 @@ function handleAddCertificate(p){
     const row=headers.map(h=>rec[h]||'');
     certSheet.appendRow(row);
     
-    writeToLog({
-      userId: p.userId,
-      userName: p.userName,
-      action: 'thêm',
-      certificateId: rec.id,
-      certificateName: rec.name,
-      imageUrl: rec.image
-    });
+    // Logging is now a fire-and-forget, not critical
+    try {
+        var logSheet = ss.getSheetByName("Log");
+        logSheet.appendRow([new Date(), p.userId, p.userName, 'thêm', rec.id, rec.name, rec.image]);
+    } catch (e) { Logger.log("Lỗi ghi log (non-critical): " + e.toString()); }
 
     return rec;
   }finally{ lock.releaseLock(); }
@@ -396,13 +385,10 @@ function handleUpdateCertificate(p){
         certSheet.getRange(i+1,1,1,row.length).setValues([row]);
         
         if (p.modifiedByUserId) {
-          writeToLog({
-            userId: p.modifiedByUserId,
-            action: 'sửa',
-            certificateId: p.id,
-            certificateName: p.name,
-            imageUrl: newUrl || p.image
-          });
+            try {
+              var logSheet = ss.getSheetByName("Log");
+              logSheet.appendRow([new Date(), p.modifiedByUserId, "N/A", 'sửa', p.id, p.name, newUrl || p.image]);
+            } catch (e) { Logger.log("Lỗi ghi log (non-critical): " + e.toString()); }
         }
         
         return {...p,image:newUrl||p.image, imageorientation: p.orientation || 1};
@@ -427,13 +413,10 @@ function handleDeleteCertificate(p){
       if(data[i][idCol]==id){
         
         if (modifiedByUserId) {
-          writeToLog({
-            userId: modifiedByUserId,
-            action: 'xóa',
-            certificateId: data[i][idCol],
-            certificateName: data[i][nameCol],
-            imageUrl: data[i][imageCol]
-          });
+            try {
+              var logSheet = ss.getSheetByName("Log");
+              logSheet.appendRow([new Date(), modifiedByUserId, "N/A", 'xóa', data[i][idCol], data[i][nameCol], data[i][imageCol]]);
+            } catch (e) { Logger.log("Lỗi ghi log (non-critical): " + e.toString()); }
         }
         
         certSheet.deleteRow(i+1); 
@@ -457,7 +440,7 @@ function handleUpdateCertificateOrientation(id, orientation) {
     for (let i = 1; i < data.length; i++) {
       if (data[i][idCol] == id) {
         certSheet.getRange(i + 1, orientCol + 1).setValue(orientation);
-        const updatedCert = sheetToObjectsFallback(certSheet).find(c => c.id == id);
+        const updatedCert = sheetToObjects(certSheet).find(c => c.id == id);
         return updatedCert;
       }
     }
@@ -494,35 +477,6 @@ function handleUpdateComplianceYear(payload) {
   } finally {
     lock.releaseLock();
   }
-}
-
-// ===================================================================================
-// 🔐 RESET MẬT KHẨU
-// ===================================================================================
-function handleRequestPasswordReset(username){
-  const users=sheetToObjectsFallback(userSheet);
-  const u=users.find(x=>x.username===username);
-  if(!u) throw new Error("Không tìm thấy tài khoản.");
-  const requests=sheetToObjectsFallback(requestSheet);
-  if(requests.some(r=>String(r.userid)===String(u.id))) return true;
-  const lock=LockService.getScriptLock(); lock.waitLock(2000);
-  requestSheet.appendRow([Date.now(),u.id,u.username,u.name]);
-  lock.releaseLock(); return true;
-}
-
-function handleCompletePasswordReset(id,newPass){
-  const data=userSheet.getDataRange().getValues();
-  const headers=normalizeHeaders(data[0]);
-  const idCol=headers.indexOf('id'), passCol=headers.indexOf('password');
-  const lock=LockService.getScriptLock();
-  if(!lock.tryLock(2000)) throw new Error("Hệ thống đang bận.");
-  for(let i=1;i<data.length;i++){
-    if(String(data[i][idCol])===String(id)){
-      data[i][passCol]=newPass;
-      userSheet.getRange(i+1,1,1,data[i].length).setValues([data[i]]);
-    }
-  }
-  lock.releaseLock(); return true;
 }
 
 // ===================================================================================
@@ -698,17 +652,5 @@ function handleAskAI(p){
 
   const ans=data?.candidates?.[0]?.content?.parts?.[0]?.text||"Không có phản hồi.";
   return ans;
-}
-
-// ===================================================================================
-// 🧱 Fallback hỗ trợ cũ
-// ===================================================================================
-function sheetToObjectsFallback(sheet){
-  if(!sheet) return [];
-  const lastRow=sheet.getLastRow(), lastCol=sheet.getLastColumn();
-  if(lastRow<2) return [];
-  const headers=normalizeHeaders(sheet.getRange(1,1,1,lastCol).getValues()[0]);
-  const data=sheet.getRange(2,1,lastRow-1,lastCol).getValues();
-  return data.map(r=>{const o={};headers.forEach((h,i)=>o[h]=r[i]);return o;});
 }
 </script>

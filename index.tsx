@@ -118,7 +118,7 @@ const api = {
         }
         
         try {
-            const response = await fetch(BACKEND_URL + (method === 'GET' ? '?action=fetchData' : ''), options);
+            const response = await fetch(BACKEND_URL + (method === 'GET' ? '?action=fetchInitialData' : ''), options);
             const result = await response.json();
 
             if (!result.success) {
@@ -144,13 +144,18 @@ const api = {
         });
     },
 
-    // FETCH all initial data
-    fetchData: async (): Promise<{ users: User[], certificates: Certificate[], titles: Title[], googleSheetUrl: string, googleFolderUrl: string, complianceStartYear: number }> => {
-        return api.request('GET', 'fetchData');
+    // FETCH initial (lightweight) data
+    fetchInitialData: async (): Promise<{ users: User[], titles: Title[], googleSheetUrl: string, googleFolderUrl: string, complianceStartYear: number }> => {
+        return api.request('GET', 'fetchInitialData');
+    },
+
+    // FETCH heavy data (certificates) separately
+    fetchCertificates: async (): Promise<Certificate[]> => {
+        return api.request('POST', 'fetchCertificates');
     },
 
     // AUTHENTICATION
-    login: async (username: string, password: string): Promise<User | null> => {
+    login: async (username: string, password: string): Promise<{ loggedInUser: User, users: User[], titles: Title[], googleSheetUrl: string, googleFolderUrl: string, complianceStartYear: number }> => {
         return api.request('POST', 'login', { username, password });
     },
     
@@ -2669,7 +2674,7 @@ const ApiStatusTab = () => {
     const checkSheets = async () => {
         setSheetsStatus({ status: 'loading', message: 'Đang kiểm tra...' });
         try {
-            await api.request('GET', 'fetchData');
+            await api.request('GET', 'fetchInitialData');
             setSheetsStatus({ status: 'success', message: 'Kết nối tới Google Sheets thành công. Dữ liệu có thể được đọc.' });
         } catch (error: any) {
             setSheetsStatus({ status: 'error', message: `Lỗi kết nối Google Sheets: ${error.message}` });
@@ -3140,16 +3145,14 @@ const App = () => {
     };
   };
 
-  const loadData = useCallback(async () => {
+  const loadInitialData = useCallback(async () => {
     try {
-        const { users: rawUsers, certificates: rawCertificates, titles: rawTitles, googleSheetUrl, googleFolderUrl, complianceStartYear: startYearFromApi } = await api.fetchData();
+        const { users: rawUsers, titles: rawTitles, googleSheetUrl, googleFolderUrl, complianceStartYear: startYearFromApi } = await api.fetchInitialData();
         
         const sanitizedUsers = rawUsers.map(sanitizeUser).filter((u): u is User => u !== null);
-        const sanitizedCertificates = rawCertificates.map(sanitizeCertificate).filter((c): c is Certificate => c !== null);
         const sanitizedTitles = (rawTitles || []).map(sanitizeTitle).filter((t): t is Title => t !== null);
 
         setUsers(sanitizedUsers);
-        setCertificates(sanitizedCertificates);
         setTitles(sanitizedTitles);
         setGoogleSheetUrl(googleSheetUrl);
         setGoogleFolderUrl(googleFolderUrl);
@@ -3157,18 +3160,19 @@ const App = () => {
             setComplianceStartYear(startYearFromApi);
         }
         
-        return { sanitizedUsers, sanitizedCertificates, sanitizedTitles };
+        return { sanitizedUsers, sanitizedTitles };
     } catch (error) {
-        console.error("Failed to load data:", error);
+        console.error("Failed to load initial data:", error);
         throw error;
     }
   }, []);
-
+  
+  // Effect to load initial lightweight data and check session
   useEffect(() => {
     const initialLoad = async () => {
         setIsLoading(true);
         try {
-            const loadedData = await loadData();
+            const loadedData = await loadInitialData();
             if(!loadedData) return;
 
             const { sanitizedUsers } = loadedData;
@@ -3187,41 +3191,61 @@ const App = () => {
             }
 
         } catch (error) {
-            console.error("Failed to load initial data:", error);
+            console.error("Failed to perform initial load:", error);
             setLoginError("Không thể tải dữ liệu từ máy chủ. Vui lòng thử lại sau.");
         } finally {
             setIsLoading(false);
         }
     };
-
     initialLoad();
-  }, [loadData]);
+  }, [loadInitialData]);
+
+    // Effect to load heavy certificate data after user is logged in
+    useEffect(() => {
+        const loadCertificates = async () => {
+            if (currentUser) {
+                try {
+                    const rawCertificates = await api.fetchCertificates();
+                    const sanitizedCertificates = rawCertificates.map(sanitizeCertificate).filter((c): c is Certificate => c !== null);
+                    setCertificates(sanitizedCertificates);
+                } catch (error) {
+                     console.error("Failed to load certificates:", error);
+                     alert('Lỗi: Không thể tải danh sách chứng chỉ.');
+                }
+            }
+        };
+        loadCertificates();
+    }, [currentUser]);
 
   const handleLogin = async (username: string, password: string) => {
     setLoginError('');
     setIsProcessing(true);
     try {
-        const userFromLogin = await api.login(username, password);
-        if (userFromLogin) {
-            // Login successful, now reload ALL data to populate the app state
-            const { sanitizedUsers } = await loadData(); 
-            
-            // Find the current user from the newly loaded full list to ensure data consistency
-            const matchedUser = sanitizedUsers.find(u => u.id === Number(userFromLogin.id));
+        // The login API now returns the initial data payload
+        const { loggedInUser, users: rawUsers, titles: rawTitles, googleSheetUrl, googleFolderUrl, complianceStartYear: startYearFromApi } = await api.login(username, password);
+        
+        // Sanitize and set state with the data from the login response
+        const sanitizedUsers = rawUsers.map(sanitizeUser).filter((u): u is User => u !== null);
+        const sanitizedTitles = (rawTitles || []).map(sanitizeTitle).filter((t): t is Title => t !== null);
 
-            if (matchedUser) {
-                setCurrentUser(matchedUser);
-                sessionStorage.setItem('currentUser', JSON.stringify(matchedUser));
-                if (!matchedUser.passwordChangedAt) {
-                    setIsForcePasswordChange(true);
-                }
-            } else {
-                 setLoginError('Đăng nhập thành công nhưng không thể tải dữ liệu người dùng.');
+        setUsers(sanitizedUsers);
+        setTitles(sanitizedTitles);
+        setGoogleSheetUrl(googleSheetUrl);
+        setGoogleFolderUrl(googleFolderUrl);
+        if (startYearFromApi) setComplianceStartYear(startYearFromApi);
+
+        // Find the current user from the newly loaded full list to ensure data consistency
+        const matchedUser = sanitizedUsers.find(u => u.id === Number(loggedInUser.id));
+        if (matchedUser) {
+            setCurrentUser(matchedUser);
+            sessionStorage.setItem('currentUser', JSON.stringify(matchedUser));
+            if (!matchedUser.passwordChangedAt) {
+                setIsForcePasswordChange(true);
             }
         } else {
-            // This path is less likely if api.login throws, but good for robustness.
-            setLoginError('Tên đăng nhập hoặc mật khẩu không chính xác.');
+             setLoginError('Đăng nhập thành công nhưng không thể tải dữ liệu người dùng.');
         }
+
     } catch (error: any) {
         setLoginError(error.message || 'Đã xảy ra lỗi khi đăng nhập.');
     } finally {
