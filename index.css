@@ -69,6 +69,32 @@ body {
     animation: fadeIn 1s ease-in-out;
 }
 
+/* General Input Styling Enhancement */
+input[type="text"],
+input[type="password"],
+input[type="search"],
+input[type="date"],
+input[type="number"],
+select,
+.multi-select-button, /* Target custom select-like button */
+input[list] {
+    border: 1px solid #ced4da; /* A slightly more visible border */
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="search"]:focus,
+input[type="date"]:focus,
+input[type="number"]:focus,
+select:focus,
+.multi-select-button:focus,
+input[list]:focus {
+    outline: none;
+    border-color: var(--secondary-color);
+    box-shadow: 0 0 0 3px rgba(10, 147, 150, 0.15);
+}
+
 
 /* Login Page */
 .login-card {
@@ -143,7 +169,6 @@ body {
 .login-form input {
   width: 100%;
   padding: 12px;
-  border: 1px solid var(--border-color);
   border-radius: 4px;
   font-size: 16px;
 }
@@ -473,7 +498,6 @@ nav.tabs li button.active::before {
 .filter-group select {
     padding: 8px;
     border-radius: 4px;
-    border: 1px solid var(--border-color);
     font-size: 16px;
 }
 .filter-group input[type="search"] {
@@ -753,7 +777,6 @@ nav.tabs li button.active::before {
 .entry-form select {
   width: 100%;
   padding: 10px;
-  border: 1px solid var(--border-color);
   border-radius: 4px;
   font-size: 16px;
 }
@@ -864,7 +887,6 @@ nav.tabs li button.active::before {
 .admin-search-input {
     padding: 8px;
     border-radius: 4px;
-    border: 1px solid var(--border-color);
     font-size: 16px;
     width: 300px;
 }
@@ -944,7 +966,6 @@ nav.tabs li button.active::before {
     width: 120px;
     padding: 8px;
     border-radius: 4px;
-    border: 1px solid var(--border-color);
     font-size: 16px;
 }
 .compliance-setting-form button {
@@ -1050,14 +1071,17 @@ nav.tabs li button.active::before {
     display: flex;
     flex-direction: column;
     gap: 12px;
-    /* NEW STYLES */
-    background-color: #f0f7f9; /* A light, calming color */
     padding: 20px;
     border-radius: var(--border-radius);
     border: 1px solid #d0e0e5;
-    align-items: center; /* Center flex items */
-    text-align: center; /* Center inline content */
+    border-left-width: 5px;
+    align-items: center;
+    text-align: center;
     box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    transition: box-shadow 0.3s ease;
+}
+.report-form:hover {
+    box-shadow: 0 4px 8px rgba(0,0,0,0.08);
 }
 
 .report-form label {
@@ -1068,7 +1092,6 @@ nav.tabs li button.active::before {
     width: 100%;
     padding: 8px;
     border-radius: 4px;
-    border: 1px solid var(--border-color);
     font-size: 16px;
 }
 
@@ -1079,13 +1102,69 @@ nav.tabs li button.active::before {
     max-width: 280px;
 }
 
-.report-form button {
-    background-color: var(--primary-color);
+/* 1. Compliance Report: Green (#2a9d8f) */
+.report-form:nth-of-type(1) {
+    background-color: #f0fff4;
+    border-left-color: #2a9d8f;
+}
+.report-form:nth-of-type(1) button {
+    background-color: #2a9d8f;
     color: white;
 }
+.report-form:nth-of-type(1) button:hover {
+    background-color: #238578;
+}
 
-.report-form button:hover {
-    background-color: var(--secondary-color);
+/* 2. Year Report: Blue (#007bff) */
+.report-form:nth-of-type(2) {
+    background-color: #f0f8ff;
+    border-left-color: #007bff;
+}
+.report-form:nth-of-type(2) button {
+    background-color: #007bff;
+    color: white;
+}
+.report-form:nth-of-type(2) button:hover {
+    background-color: #0069d9;
+}
+
+/* 3. Department Report: Orange (#fd7e14) */
+.report-form:nth-of-type(3) {
+    background-color: #fff8f0;
+    border-left-color: #fd7e14;
+}
+.report-form:nth-of-type(3) button {
+    background-color: #fd7e14;
+    color: white;
+}
+.report-form:nth-of-type(3) button:hover {
+    background-color: #e87311;
+}
+
+/* 4. Title Report: Purple (#6f42c1) */
+.report-form:nth-of-type(4) {
+    background-color: #f8f0ff;
+    border-left-color: #6f42c1;
+}
+.report-form:nth-of-type(4) button {
+    background-color: #6f42c1;
+    color: white;
+}
+.report-form:nth-of-type(4) button:hover {
+    background-color: #6139a8;
+}
+
+/* 5. Date Range Report: Brown (#8b4513) */
+.report-form:nth-of-type(5) {
+    background-color: #fffaf5;
+    border-left-color: #8b4513;
+}
+.report-form:nth-of-type(5) button {
+    background-color: #8b4513;
+    color: white;
+}
+.report-form:nth-of-type(5) button:hover {
+    background-color: #7a3d11;
 }
 
 .reporting-main-content {
@@ -1345,7 +1424,6 @@ nav.tabs li button.active::before {
 }
 .multi-select-button {
     background: white;
-    border: 1px solid var(--border-color);
     padding: 0 12px;
     border-radius: 4px;
     cursor: pointer;
@@ -1472,17 +1550,11 @@ nav.tabs li button.active::before {
 .chat-input-form input {
     flex-grow: 1;
     padding: 12px 18px;
-    border: 1px solid var(--border-color);
     border-radius: 22px;
     margin-right: 0;
     font-size: 16px;
-    transition: border-color 0.2s, box-shadow 0.2s;
 }
-.chat-input-form input:focus {
-    outline: none;
-    border-color: var(--secondary-color);
-    box-shadow: 0 0 0 3px rgba(10, 147, 150, 0.15);
-}
+
 .chat-input-form button {
     border-radius: 50%;
     width: 44px;
@@ -1614,7 +1686,6 @@ nav.tabs li button.active::before {
 .modal-form input, .modal-form select {
   width: 100%;
   padding: 10px;
-  border: 1px solid var(--border-color);
   border-radius: 4px;
   font-size: 16px;
 }
@@ -2144,25 +2215,37 @@ nav.tabs li button.active::before {
 
     /* General print resets */
     body {
-        background-color: #fff;
+        background-color: #fff !important;
         font-size: 10pt;
+        color: #000 !important;
     }
     
     /* Hide the action buttons in the print view */
     .report-actions {
-        display: none;
+        display: none !important;
     }
 
     .report-output-header h4 {
         margin-bottom: 10px;
+        color: #000 !important;
     }
     
-    /* Table styling for print */
+    /* Table styling for print - OVERRIDE RESPONSIVE STYLES */
+    .report-table, .report-table tbody, .report-table thead, .report-table tr, .report-table th, .report-table td {
+        display: revert !important; /* Revert to default table display properties */
+        position: static !important;
+        text-align: left !important;
+        padding: 8px !important;
+    }
+
     .report-table {
         width: 100%;
-        border-collapse: collapse;
+        border-collapse: collapse !important;
         page-break-inside: auto;
-        box-shadow: none;
+        box-shadow: none !important;
+    }
+    .report-table thead {
+        display: table-header-group !important; /* Ensure header is shown */
     }
     .report-table tr {
         page-break-inside: avoid;
@@ -2170,15 +2253,18 @@ nav.tabs li button.active::before {
     }
     .report-table th, .report-table td {
         border: 1px solid #000 !important;
-        padding: 8px;
         background-color: #fff !important;
         color: #000 !important;
     }
     .report-table th {
-        font-weight: bold;
+        font-weight: bold !important;
+        background-color: #ddd !important;
     }
     .report-table .department-header-row th {
         background-color: #ddd !important;
         text-align: left !important;
+    }
+    .report-table td::before {
+        content: none !important; /* Remove mobile labels */
     }
 }
