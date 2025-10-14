@@ -1,5 +1,3 @@
-
-
 <!DOCTYPE html>
 <html lang="vi">
   <head>
@@ -24,18 +22,19 @@
 </script>
   <!-- Libraries for Excel Export -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <!-- Library to read EXIF data for auto-rotation -->
+  <script src="https://cdn.jsdelivr.net/npm/exif-js"></script>
 <link rel="stylesheet" href="/index.css">
 </head>
   <body>
     <div id="root"></div>
     <script type="module" src="index.tsx"></script>
-  <script type="module" src="/index.tsx"></script>
 </body>
 </html>
 <script>
 // ===================================================================================
 //
-//      GOOGLE APPS SCRIPT BACKEND (HYBRID FAST v4 - Optimized I/O + Cache)
+//      GOOGLE APPS SCRIPT BACKEND (HYBRID FAST v4.1 - Orientation Support)
 //
 // ===================================================================================
 
@@ -144,36 +143,48 @@ function doGet(e){
 }
 
 function doPost(e){
-  try{
-    const body=JSON.parse(e.postData.contents);
-    const {action,payload}=body;
+  try {
+    const body = JSON.parse(e.postData.contents);
+    const { action, payload } = body;
     let result;
-    switch(action){
-      case 'login': result=handleLogin(payload.username,payload.password); break;
-      case 'changePassword': result=handleChangePassword(payload); break;
-      case 'addUser': result=handleAddUser(payload); break;
-      case 'updateUser': result=handleUpdateUser(payload); break;
-      case 'deleteUser': result=handleDeleteUser(payload.userId); break;
-      case 'addCertificate': result=handleAddCertificate(payload); break;
-      case 'updateCertificate': result=handleUpdateCertificate(payload); break;
-      case 'deleteCertificate': result=handleDeleteCertificate(payload.id); break;
-      case 'requestPasswordReset': result=handleRequestPasswordReset(payload.username); break;
-      case 'completePasswordReset': result=handleCompletePasswordReset(payload.userId,payload.newPass); break;
-      case 'askAI': result=handleAskAI(payload); break;
-      case 'extractCertificateInfo': result=handleExtractCertificateInfo(payload); break;
-      case 'checkGeminiApi': result=handleCheckGeminiApi(); break;
-      case 'updateComplianceYear': result = handleUpdateComplianceYear(payload); break;
-      default: throw new Error("Action không hợp lệ: "+action);
-    }
-    // Xóa cache khi ghi dữ liệu
-    const writeActions=['addCertificate','updateCertificate','deleteCertificate','addUser','updateUser','deleteUser','changePassword','completePasswordReset', 'updateComplianceYear'];
-    if (writeActions.includes(action)) clearCache();
 
-    return ContentService.createTextOutput(JSON.stringify({success:true,data:result}))
+    // Handler map for actions
+    const actionHandlers = {
+      'login': (p) => handleLogin(p.username, p.password),
+      'changePassword': handleChangePassword,
+      'addUser': handleAddUser,
+      'updateUser': handleUpdateUser,
+      'deleteUser': (p) => handleDeleteUser(p.userId),
+      'addCertificate': handleAddCertificate,
+      'updateCertificate': handleUpdateCertificate,
+      'deleteCertificate': (p) => handleDeleteCertificate(p.id),
+      'updateCertificateOrientation': (p) => handleUpdateCertificateOrientation(p.id, p.orientation),
+      'requestPasswordReset': (p) => handleRequestPasswordReset(p.username),
+      'completePasswordReset': (p) => handleCompletePasswordReset(p.userId, p.newPass),
+      'askAI': handleAskAI,
+      'extractCertificateInfo': handleExtractCertificateInfo,
+      'extractFromImageUrl': handleExtractFromImageUrl,
+      'checkGeminiApi': handleCheckGeminiApi,
+      'updateComplianceYear': handleUpdateComplianceYear
+    };
+
+    if (actionHandlers[action]) {
+      result = actionHandlers[action](payload);
+    } else {
+      throw new Error("Action không hợp lệ: " + action);
+    }
+    
+    // Invalidate cache on write operations
+    const writeActions = ['addCertificate', 'updateCertificate', 'deleteCertificate', 'addUser', 'updateUser', 'deleteUser', 'changePassword', 'completePasswordReset', 'updateComplianceYear', 'updateCertificateOrientation'];
+    if (writeActions.includes(action)) {
+      clearCache();
+    }
+
+    return ContentService.createTextOutput(JSON.stringify({ success: true, data: result }))
       .setMimeType(ContentService.MimeType.JSON);
-  }catch(err){
-    Logger.log("Lỗi doPost: "+err.stack);
-    return ContentService.createTextOutput(JSON.stringify({success:false,message:err.message}))
+  } catch (err) {
+    Logger.log("Lỗi doPost: " + err.stack);
+    return ContentService.createTextOutput(JSON.stringify({ success: false, message: err.message }))
       .setMimeType(ContentService.MimeType.JSON);
   }
 }
@@ -283,7 +294,7 @@ function handleAddCertificate(p){
     const blob=Utilities.newBlob(Utilities.base64Decode(p.imageBase64),p.imageType,p.imageName);
     const file=driveFolder.createFile(blob);
     const url=file.getUrl();
-    const rec={id:p.id,userid:p.userId,name:p.name,date:p.date,credits:p.credits,image:url,updatedat:new Date().toISOString()};
+    const rec={id:p.id,userid:p.userId,name:p.name,date:p.date,credits:p.credits,image:url,updatedat:new Date().toISOString(), imageorientation: p.orientation || 0 };
     const headers=normalizeHeaders(certSheet.getRange(1,1,1,certSheet.getLastColumn()).getValues()[0]);
     const row=headers.map(h=>rec[h]||'');
     certSheet.appendRow(row);
@@ -299,6 +310,7 @@ function handleUpdateCertificate(p){
     const headers=normalizeHeaders(data[0]);
     const idCol=headers.indexOf('id');
     const imgCol=headers.indexOf('image');
+    const orientCol = headers.indexOf('imageorientation');
     let newUrl=null;
     if(p.newImageBase64){
       const blob=Utilities.newBlob(Utilities.base64Decode(p.newImageBase64),p.newImageType,p.newImageName);
@@ -311,8 +323,9 @@ function handleUpdateCertificate(p){
           if(p[h]!==undefined) row[idx]=p[h];
         });
         if(newUrl && imgCol>-1) row[imgCol]=newUrl;
+        if(newUrl && orientCol > -1) row[orientCol] = p.orientation || 0; // Reset orientation for new image
         certSheet.getRange(i+1,1,1,row.length).setValues([row]);
-        return {...p,image:newUrl||p.image};
+        return {...p,image:newUrl||p.image, imageorientation: p.orientation || 0};
       }
     }
     throw new Error("Không tìm thấy chứng chỉ.");
@@ -331,6 +344,29 @@ function handleDeleteCertificate(id){
     }
     throw new Error("Không tìm thấy chứng chỉ để xóa.");
   }finally{ lock.releaseLock(); }
+}
+
+function handleUpdateCertificateOrientation(id, orientation) {
+  const lock=LockService.getScriptLock();
+  if(!lock.tryLock(3000)) throw new Error("Hệ thống đang bận.");
+  try{
+    const data = certSheet.getDataRange().getValues();
+    const headers = normalizeHeaders(data[0]);
+    const idCol = headers.indexOf('id');
+    const orientCol = headers.indexOf('imageorientation');
+    if (orientCol === -1) throw new Error("Cột 'ImageOrientation' không tồn tại trong sheet.");
+    
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][idCol] == id) {
+        certSheet.getRange(i + 1, orientCol + 1).setValue(orientation);
+        const updatedCert = sheetToObjectsFallback(certSheet).find(c => c.id == id);
+        return updatedCert;
+      }
+    }
+    throw new Error("Không tìm thấy chứng chỉ để cập nhật hướng xoay.");
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // ===================================================================================
@@ -394,6 +430,60 @@ function handleCompletePasswordReset(id,newPass){
 // ===================================================================================
 // 🤖 AI + GEMINI
 // ===================================================================================
+function callGeminiForExtraction(imageBase64, imageType) {
+  const API_KEY = PropertiesService.getScriptProperties().getProperty('API_KEY');
+  if (!API_KEY) throw new Error("Thiếu API Key Gemini.");
+  if (!imageBase64 || !imageType) throw new Error("Thiếu dữ liệu ảnh.");
+
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + API_KEY;
+  
+  const promptText = `Bạn là một chuyên gia trích xuất dữ liệu từ hình ảnh chứng chỉ. Nhiệm vụ của bạn là đọc hình ảnh và trả về một đối tượng JSON với các trường sau:
+- "name": Tên của khóa học hoặc chương trình đào tạo.
+- "date": Ngày cấp chứng chỉ, định dạng YYYY-MM-DD.
+- "credits": Tổng số tiết học hoặc tín chỉ. Chỉ lấy số.
+
+**CÁC QUY TẮC BẮT BUỘC:**
+1.  **KHÔNG LẤY TÊN NGƯỜI:** Tên chứng chỉ TUYỆT ĐỐI KHÔNG PHẢI là tên người. Bỏ qua các tên riêng như "Ông Nguyễn Văn A" hoặc "Bà Trần Thị B".
+2.  **TÌM TỪ KHÓA:** Tên khóa học thường được tìm thấy trong các cụm từ như: "hoàn thành khóa học", "chứng nhận đã hoàn thành chương trình", "đào tạo liên tục về", "lớp tập huấn", "bồi dưỡng chuyên môn về". Hãy tìm nội dung chính của khóa học đó. Ví dụ: Trong câu "Chứng nhận Ông/Bà Nguyễn Văn An đã hoàn thành khóa học Kỹ năng giao tiếp", kết quả phải là {"name": "Kỹ năng giao tiếp"}.
+3.  **ƯU TIÊN CHỮ LỚN:** Nếu các quy tắc trên không áp dụng được, hãy lấy dòng chữ có kích thước lớn nhất, nổi bật nhất làm tên chứng chỉ.
+4.  **KHÔNG TÌM THẤY THÌ BỎ TRỐNG:** Nếu bạn không thể chắc chắn tìm thấy bất kỳ thông tin nào phù hợp (ví dụ: hình ảnh không phải là chứng chỉ hoặc không thể đọc được), hãy trả về một đối tượng JSON với các trường có giá trị rỗng (""). **Tuyệt đối không tự bịa ra thông tin.**`;
+
+  const body = {
+    contents: [{
+      parts: [
+        { text: promptText },
+        { inlineData: { mimeType: imageType, data: imageBase64 } }
+      ]
+    }],
+    generationConfig: { responseMimeType: "application/json" }
+  };
+
+  const res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', payload: JSON.stringify(body), muteHttpExceptions: true });
+  if (res.getResponseCode() >= 400) throw new Error(res.getContentText());
+
+  const data = JSON.parse(res.getContentText());
+  const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  return raw ? JSON.parse(raw) : {};
+}
+
+function handleExtractCertificateInfo(p){
+    return callGeminiForExtraction(p.imageBase64, p.imageType);
+}
+
+function handleExtractFromImageUrl(p) {
+    if (!p.imageUrl) throw new Error("Thiếu URL hình ảnh.");
+    try {
+        const imageBlob = UrlFetchApp.fetch(p.imageUrl).getBlob();
+        const base64Data = Utilities.base64Encode(imageBlob.getBytes());
+        const imageType = imageBlob.getContentType();
+        return callGeminiForExtraction(base64Data, imageType);
+    } catch (e) {
+        Logger.log("Lỗi khi fetch ảnh từ URL: " + e.toString());
+        throw new Error("Không thể tải hoặc xử lý ảnh từ URL được cung cấp.");
+    }
+}
+
+
 function handleCheckGeminiApi(){
   const API_KEY=PropertiesService.getScriptProperties().getProperty('API_KEY');
   if(!API_KEY) throw new Error("Chưa cấu hình API Key Gemini.");
@@ -411,19 +501,6 @@ function handleAskAI(p){
   const data=JSON.parse(res.getContentText());
   const ans=data?.candidates?.[0]?.content?.parts?.[0]?.text||"Không có phản hồi.";
   return ans;
-}
-
-function handleExtractCertificateInfo(p){
-  const API_KEY=PropertiesService.getScriptProperties().getProperty('API_KEY');
-  if(!API_KEY) throw new Error("Thiếu API Key Gemini.");
-  if(!p.imageBase64||!p.imageType) throw new Error("Thiếu dữ liệu ảnh.");
-  const url='https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+API_KEY;
-  const body={contents:[{parts:[{text:'Trích xuất JSON {"name":"...","date":"YYYY-MM-DD","credits":số_tiết} từ ảnh chứng chỉ.'},{inlineData:{mimeType:p.imageType,data:p.imageBase64}}]}],generationConfig:{responseMimeType:"application/json"}};
-  const res=UrlFetchApp.fetch(url,{method:'post',contentType:'application/json',payload:JSON.stringify(body),muteHttpExceptions:true});
-  if(res.getResponseCode()>=400) throw new Error(res.getContentText());
-  const data=JSON.parse(res.getContentText());
-  const raw=data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  return raw?JSON.parse(raw):{};
 }
 
 // ===================================================================================

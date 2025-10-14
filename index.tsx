@@ -5,6 +5,8 @@ Chart.register(...registerables);
 
 // For Excel export
 declare var XLSX: any;
+// For EXIF data reading
+declare var EXIF: any;
 
 
 // --- Type definitions ---
@@ -12,7 +14,7 @@ interface User {
   id: number;
   username: string;
   password?: string;
-  role: 'user' | 'admin' | 'reporter';
+  role: 'user' | 'admin' | 'reporter' | 'reporter_user';
   name: string;
   department: string;
   passwordChangedAt?: string;
@@ -33,6 +35,7 @@ interface Certificate {
   credits: number;
   image: string;
   updatedAt?: string;
+  imageOrientation?: number;
 }
 
 // Used when creating a new certificate, before it's saved and gets an ID.
@@ -41,6 +44,7 @@ interface NewCertificatePayload {
     date: string;
     credits: number;
     imageFile: File; // We use the File object for the "upload"
+    orientation: number;
 }
 
 interface ReportGroup {
@@ -162,12 +166,16 @@ const api = {
             imageName: newImageName,
             imageType: certData.imageFile.type,
             imageBase64,
+            orientation: certData.orientation,
         };
         return api.request('POST', 'addCertificate', payload);
     },
     updateCertificate: async (payload: any): Promise<Certificate> => {
         const payloadWithTimestamp = { ...payload, updatedAt: new Date().toISOString() };
         return api.request('POST', 'updateCertificate', payloadWithTimestamp);
+    },
+    updateCertificateOrientation: async (id: number, orientation: number): Promise<Certificate> => {
+        return api.request('POST', 'updateCertificateOrientation', { id, orientation });
     },
     deleteCertificate: async (id: number): Promise<number> => {
         return api.request('POST', 'deleteCertificate', { id });
@@ -196,6 +204,19 @@ const api = {
 //
 // ===================================================================================
 
+const getRotationFromExif = (orientation: number | undefined): number => {
+    switch (orientation) {
+        case 3:
+            return 180;
+        case 6:
+            return 90;
+        case 8:
+            return -90; // 270 degrees clockwise
+        default:
+            return 0;
+    }
+};
+
 const ConfirmationModal = ({ message, onConfirm, onCancel, confirmText = 'Xác nhận', cancelText = 'Hủy' }: { message: string, onConfirm: () => void, onCancel: () => void, confirmText?: string, cancelText?: string }) => {
     return (
         <div className="modal-overlay" onClick={onCancel}>
@@ -211,7 +232,11 @@ const ConfirmationModal = ({ message, onConfirm, onCancel, confirmText = 'Xác n
     );
 };
 
-const ImageViewerModal = ({ imageUrl, onClose }: { imageUrl: string; onClose: () => void }) => {
+const ImageViewerModal = ({ certificate, onClose, onSaveRotation }: { certificate: Certificate; onClose: () => void; onSaveRotation: (certId: number, orientation: number) => void; }) => {
+    const initialOrientation = certificate.imageOrientation || 1;
+    const [currentOrientation, setCurrentOrientation] = useState(initialOrientation);
+    const [isSaving, setIsSaving] = useState(false);
+
     useEffect(() => {
         const handleEsc = (event: KeyboardEvent) => {
             if (event.key === 'Escape') {
@@ -219,10 +244,35 @@ const ImageViewerModal = ({ imageUrl, onClose }: { imageUrl: string; onClose: ()
             }
         };
         window.addEventListener('keydown', handleEsc);
-        return () => {
-            window.removeEventListener('keydown', handleEsc);
-        };
+        return () => window.removeEventListener('keydown', handleEsc);
     }, [onClose]);
+
+    const orientationToRotationMap: { [key: number]: number } = { 1: 0, 6: 90, 3: 180, 8: 270 };
+    const rotationToOrientationMap: { [key: number]: number } = { 0: 1, 90: 6, 180: 3, 270: 8 };
+
+    const handleRotate = (direction: 'cw' | 'ccw') => {
+        const currentRotation = orientationToRotationMap[currentOrientation] || 0;
+        const newRotation = direction === 'cw'
+            ? (currentRotation + 90) % 360
+            : (currentRotation - 90 + 360) % 360;
+        setCurrentOrientation(rotationToOrientationMap[newRotation] || 1);
+    };
+
+    const handleSave = async () => {
+        setIsSaving(true);
+        try {
+            await onSaveRotation(certificate.id, currentOrientation);
+            onClose();
+        } catch (error) {
+            console.error("Failed to save rotation", error);
+            alert("Lỗi: Không thể lưu hướng xoay.");
+        } finally {
+            setIsSaving(false);
+        }
+    };
+    
+    const rotationDegrees = getRotationFromExif(currentOrientation);
+    const hasChanged = currentOrientation !== initialOrientation;
 
     return (
         <div className="modal-overlay image-viewer-overlay" onClick={onClose}>
@@ -230,7 +280,21 @@ const ImageViewerModal = ({ imageUrl, onClose }: { imageUrl: string; onClose: ()
                 <button className="image-viewer-close-btn" onClick={onClose} title="Đóng (Esc)">
                     <span className="material-icons">close</span>
                 </button>
-                <img src={imageUrl} alt="Phóng to hình ảnh chứng chỉ" />
+                <div className="image-viewer-toolbar">
+                    <button onClick={() => handleRotate('ccw')} title="Xoay trái"><span className="material-icons">rotate_left</span></button>
+                    <button onClick={() => handleRotate('cw')} title="Xoay phải"><span className="material-icons">rotate_right</span></button>
+                    {hasChanged && (
+                        <button className="btn btn-primary" onClick={handleSave} disabled={isSaving}>
+                            <span className="material-icons">{isSaving ? 'hourglass_top' : 'save'}</span>
+                            {isSaving ? 'Đang lưu...' : 'Lưu hướng xoay'}
+                        </button>
+                    )}
+                </div>
+                <img 
+                    src={certificate.image} 
+                    alt="Phóng to hình ảnh chứng chỉ" 
+                    style={{ transform: `rotate(${rotationDegrees}deg)` }}
+                />
             </div>
         </div>
     );
@@ -278,7 +342,7 @@ const LoginPage = ({ onLogin, error }: { onLogin: (username: string, password: s
   );
 };
 
-const EditCertificateModal = ({ certificate, onSave, onCancel }: { certificate: Certificate, onSave: (data: Certificate, newImageFile?: File) => void, onCancel: () => void }) => {
+const EditCertificateModal = ({ certificate, onSave, onCancel }: { certificate: Certificate, onSave: (data: Certificate, newImageFile?: File, newImageOrientation?: number) => void, onCancel: () => void }) => {
     const [formData, setFormData] = useState({
         name: certificate.name,
         date: certificate.date || '',
@@ -286,7 +350,12 @@ const EditCertificateModal = ({ certificate, onSave, onCancel }: { certificate: 
     });
     const [newImageFile, setNewImageFile] = useState<File | null>(null);
     const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+    const [imageOrientation, setImageOrientation] = useState(1);
+    const [imageRotation, setImageRotation] = useState(0);
     const [error, setError] = useState('');
+    const [isExtracting, setIsExtracting] = useState(false);
+    const [isExtractingCurrent, setIsExtractingCurrent] = useState(false);
+    const [extractionStatus, setExtractionStatus] = useState('');
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -300,6 +369,66 @@ const EditCertificateModal = ({ certificate, onSave, onCancel }: { certificate: 
             setNewImageFile(file);
             const objectUrl = URL.createObjectURL(file);
             setImagePreviewUrl(objectUrl);
+            
+            // Read EXIF data for auto-rotation
+            EXIF.getData(file, function() {
+                const orientation = EXIF.getTag(this, "Orientation") || 1;
+                setImageOrientation(orientation);
+                const rotation = getRotationFromExif(orientation);
+                setImageRotation(rotation);
+            });
+        }
+    };
+    
+    const applyExtractionResult = (result: any) => {
+        // Update form data only with fields that the AI found
+        setFormData(prev => ({
+            ...prev,
+            name: result.name || prev.name,
+            date: result.date || prev.date,
+            credits: result.credits ? String(result.credits) : prev.credits,
+        }));
+        setExtractionStatus('Đã trích xuất và cập nhật thông tin!');
+    };
+
+    const handleExtractFromNewImage = async () => {
+        if (!newImageFile) return;
+
+        setIsExtracting(true);
+        setExtractionStatus('Đang phân tích ảnh mới...');
+        try {
+            const reader = new FileReader();
+            reader.readAsDataURL(newImageFile);
+            reader.onloadend = async () => {
+                const base64Data = (reader.result as string).split(',')[1];
+                const result = await api.request('POST', 'extractCertificateInfo', {
+                    imageBase64: base64Data,
+                    imageType: newImageFile.type,
+                });
+                applyExtractionResult(result);
+            };
+        } catch (error: any) {
+            console.error("AI Extraction Error (New Image):", error);
+            setExtractionStatus(error.message || 'Lỗi: Không thể trích xuất thông tin.');
+        } finally {
+            setIsExtracting(false);
+        }
+    };
+    
+    const handleExtractFromCurrentImage = async () => {
+        if (!certificate.image) return;
+        setIsExtractingCurrent(true);
+        setExtractionStatus('Đang phân tích ảnh hiện tại...');
+        try {
+            const result = await api.request('POST', 'extractFromImageUrl', {
+                imageUrl: certificate.image,
+            });
+            applyExtractionResult(result);
+        } catch (error: any) {
+            console.error("AI Extraction Error (Current Image):", error);
+            setExtractionStatus(error.message || 'Lỗi: Không thể trích xuất thông tin.');
+        } finally {
+            setIsExtractingCurrent(false);
         }
     };
     
@@ -319,7 +448,7 @@ const EditCertificateModal = ({ certificate, onSave, onCancel }: { certificate: 
             name: formData.name.trim(),
             date: formData.date,
             credits: parseFloat(formData.credits) || 0
-        }, newImageFile);
+        }, newImageFile, imageOrientation);
     };
 
     return (
@@ -349,18 +478,36 @@ const EditCertificateModal = ({ certificate, onSave, onCancel }: { certificate: 
                             style={{ display: 'none' }} 
                             ref={fileInputRef} 
                         />
-                        <button type="button" className="btn" style={{width: 'auto', background: '#f0f4f8', color: '#333'}} onClick={() => fileInputRef.current?.click()}>
-                            <span className="material-icons">upload_file</span> Chọn ảnh mới
-                        </button>
+                        <div className="modal-image-actions">
+                            <button type="button" className="btn" style={{background: '#f0f4f8', color: '#333'}} onClick={() => fileInputRef.current?.click()}>
+                                <span className="material-icons">upload_file</span> Chọn ảnh mới
+                            </button>
+                             {certificate.image && (
+                                <button type="button" className="btn" onClick={handleExtractFromCurrentImage} disabled={isExtractingCurrent || isExtracting}>
+                                    <span className="material-icons">{isExtractingCurrent ? 'hourglass_top' : 'smart_toy'}</span>
+                                    {isExtractingCurrent ? 'Đang trích xuất...' : 'Trích xuất từ ảnh hiện tại'}
+                                </button>
+                            )}
+                            {newImageFile && (
+                                <button type="button" className="btn" onClick={handleExtractFromNewImage} disabled={isExtracting || isExtractingCurrent}>
+                                    <span className="material-icons">{isExtracting ? 'hourglass_top' : 'smart_toy'}</span>
+                                    {isExtracting ? 'Đang trích xuất...' : 'Trích xuất từ ảnh mới'}
+                                </button>
+                            )}
+                           
+                        </div>
                         {(imagePreviewUrl || certificate.image) && (
                             <div className="image-preview" style={{ marginTop: '10px' }}>
                                 <img 
                                     src={imagePreviewUrl || certificate.image} 
                                     alt="Xem trước" 
-                                    style={{ maxWidth: '100%', maxHeight: '150px', borderRadius: '4px' }} 
+                                    style={{
+                                        transform: imagePreviewUrl ? `rotate(${imageRotation}deg)` : `rotate(${getRotationFromExif(certificate.imageOrientation)}deg)`
+                                    }}
                                 />
                             </div>
                         )}
+                         {extractionStatus && <p className={`extraction-status ${extractionStatus.startsWith('Lỗi') ? 'error' : ''}`}>{extractionStatus}</p>}
                     </div>
                     {error && <p className="error" style={{textAlign: 'left', minHeight: '0', marginBottom: '16px'}}>{error}</p>}
                     <div className="modal-actions">
@@ -519,14 +666,14 @@ const MultiYearSelector = ({ allYears, selectedYears, onSelectionChange }: { all
 };
 
 
-const ProfileTab = ({ certificates, user, onDeleteCertificate, onUpdateCertificate }: { certificates: Certificate[], user: User, onDeleteCertificate: (id: number) => void, onUpdateCertificate: (cert: Certificate, newImageFile?: File) => void }) => {
+const ProfileTab = ({ certificates, user, onDeleteCertificate, onUpdateCertificate, onUpdateCertificateOrientation }: { certificates: Certificate[], user: User, onDeleteCertificate: (id: number) => void, onUpdateCertificate: (cert: Certificate, newImageFile?: File, newImageOrientation?: number) => void, onUpdateCertificateOrientation: (certId: number, orientation: number) => void }) => {
     const [selectedYears, setSelectedYears] = useState<number[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [editingCertificate, setEditingCertificate] = useState<Certificate | null>(null);
     const [confirmation, setConfirmation] = useState<{message: string, onConfirm: () => void} | null>(null);
     const [viewMode, setViewMode] = useState<ViewMode>('grid');
     const [expandedRowId, setExpandedRowId] = useState<number | null>(null);
-    const [viewingImage, setViewingImage] = useState<string | null>(null);
+    const [viewingImage, setViewingImage] = useState<Certificate | null>(null);
 
     const userCertificates = useMemo(() => {
         return certificates.filter(c => c.userId === user.id)
@@ -563,9 +710,9 @@ const ProfileTab = ({ certificates, user, onDeleteCertificate, onUpdateCertifica
         return Number.isInteger(sum) ? sum : sum.toFixed(1);
     }, [filteredCertificates]);
     
-    const handleViewImage = (e: React.MouseEvent, imageUrl: string) => {
+    const handleViewImage = (e: React.MouseEvent, cert: Certificate) => {
         e.stopPropagation();
-        setViewingImage(imageUrl);
+        setViewingImage(cert);
     };
 
     const handleDelete = (e: React.MouseEvent, certId: number, certName: string) => {
@@ -581,8 +728,8 @@ const ProfileTab = ({ certificates, user, onDeleteCertificate, onUpdateCertifica
         setEditingCertificate(cert);
     };
 
-    const handleSaveCertificate = (updatedCert: Certificate, newImageFile?: File) => {
-        onUpdateCertificate(updatedCert, newImageFile);
+    const handleSaveCertificate = (updatedCert: Certificate, newImageFile?: File, newImageOrientation?: number) => {
+        onUpdateCertificate(updatedCert, newImageFile, newImageOrientation);
         setEditingCertificate(null);
     };
     
@@ -632,7 +779,8 @@ const ProfileTab = ({ certificates, user, onDeleteCertificate, onUpdateCertifica
                                                         <img 
                                                             src={cert.image || 'https://via.placeholder.com/600x400.png?text=Kh%C3%B4ng+th%E1%BB%83+t%E1%BA%A3i+%E1%BA%A3nh'} 
                                                             alt={cert.name} 
-                                                            onClick={(e) => cert.image && handleViewImage(e, cert.image)}
+                                                            style={{ transform: `rotate(${getRotationFromExif(cert.imageOrientation)}deg)` }}
+                                                            onClick={(e) => cert.image && handleViewImage(e, cert)}
                                                             onError={(e) => {
                                                                 const target = e.target as HTMLImageElement;
                                                                 target.onerror = null; // prevent infinite loop
@@ -674,7 +822,8 @@ const ProfileTab = ({ certificates, user, onDeleteCertificate, onUpdateCertifica
                                 <img 
                                     src={cert.image || 'https://via.placeholder.com/400x250.png?text=Kh%C3%B4ng+th%E1%BB%83+t%E1%BA%A3i+%E1%BA%A3nh'} 
                                     alt={cert.name} 
-                                    onClick={(e) => cert.image && handleViewImage(e, cert.image)}
+                                    style={{ transform: `rotate(${getRotationFromExif(cert.imageOrientation)}deg)` }}
+                                    onClick={(e) => cert.image && handleViewImage(e, cert)}
                                     onError={(e) => {
                                         const target = e.target as HTMLImageElement;
                                         target.onerror = null; // prevent infinite loop
@@ -748,8 +897,9 @@ const ProfileTab = ({ certificates, user, onDeleteCertificate, onUpdateCertifica
         )}
         {viewingImage && (
             <ImageViewerModal 
-                imageUrl={viewingImage}
+                certificate={viewingImage}
                 onClose={() => setViewingImage(null)}
+                onSaveRotation={onUpdateCertificateOrientation}
             />
         )}
       </div>
@@ -762,6 +912,8 @@ const DataEntryTab = ({ onAddCertificate }: { onAddCertificate: (cert: NewCertif
     const [credits, setCredits] = useState('');
     const [imageFile, setImageFile] = useState<File | null>(null);
     const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+    const [imageOrientation, setImageOrientation] = useState(1);
+    const [imageRotation, setImageRotation] = useState(0);
     const [isProcessing, setIsProcessing] = useState(false);
     const [statusMessage, setStatusMessage] = useState('');
     const [isCameraOpen, setIsCameraOpen] = useState(false);
@@ -779,6 +931,8 @@ const DataEntryTab = ({ onAddCertificate }: { onAddCertificate: (cert: NewCertif
         setDate('');
         setCredits('');
         setImageFile(null);
+        setImageOrientation(1);
+        setImageRotation(0);
         setStatusMessage('');
         if (fileInputRef.current) {
             fileInputRef.current.value = "";
@@ -841,6 +995,13 @@ const DataEntryTab = ({ onAddCertificate }: { onAddCertificate: (cert: NewCertif
         const file = e.target.files ? e.target.files[0] : null;
         setImageFile(file);
         if (file) {
+            // Read EXIF data for auto-rotation
+            EXIF.getData(file, function() {
+                const orientation = EXIF.getTag(this, "Orientation") || 1;
+                setImageOrientation(orientation);
+                const rotation = getRotationFromExif(orientation);
+                setImageRotation(rotation);
+            });
             processImageFile(file);
         }
     };
@@ -904,6 +1065,8 @@ const DataEntryTab = ({ onAddCertificate }: { onAddCertificate: (cert: NewCertif
                 if (blob) {
                     const file = new File([blob], "capture.jpg", { type: "image/jpeg" });
                     setImageFile(file);
+                    setImageOrientation(1); // Camera captures are always correctly oriented (value 1 means no rotation)
+                    setImageRotation(0);
                     processImageFile(file);
                 }
             }, 'image/jpeg');
@@ -927,7 +1090,8 @@ const DataEntryTab = ({ onAddCertificate }: { onAddCertificate: (cert: NewCertif
         const newCertificate: NewCertificatePayload = {
             name: name.trim(), date,
             credits: parseFloat(credits),
-            imageFile: imageFile
+            imageFile: imageFile,
+            orientation: imageOrientation,
         };
 
         setConfirmation({
@@ -968,7 +1132,11 @@ const DataEntryTab = ({ onAddCertificate }: { onAddCertificate: (cert: NewCertif
                     {imageFile && <p style={{marginTop: '8px'}}>Đã chọn: {imageFile.name}</p>}
                     {imagePreviewUrl && (
                         <div className="image-preview">
-                            <img src={imagePreviewUrl} alt="Xem trước hình ảnh" />
+                            <img 
+                                src={imagePreviewUrl} 
+                                alt="Xem trước hình ảnh" 
+                                style={{ transform: `rotate(${imageRotation}deg)` }}
+                            />
                         </div>
                     )}
                     {statusMessage && <p className={`extraction-status ${statusMessage.startsWith('Lỗi') ? 'error' : ''}`}>{statusMessage}</p>}
@@ -1151,7 +1319,14 @@ const AIAssistantTab = ({ certificates, users }: { certificates: Certificate[], 
 
 
 
-const ReportingTab = ({ certificates, users }: { certificates: Certificate[], users: User[] }) => {
+const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDeleteCertificate, onUpdateCertificateOrientation }: { 
+    certificates: Certificate[], 
+    users: User[],
+    user: User,
+    onUpdateCertificate: (cert: Certificate, newImageFile?: File, newImageOrientation?: number) => void,
+    onDeleteCertificate: (id: number) => void,
+    onUpdateCertificateOrientation: (certId: number, orientation: number) => void,
+}) => {
     const chartRef = useRef<HTMLCanvasElement | null>(null);
     const chartInstance = useRef<Chart | null>(null);
     const reportOutputRef = useRef<HTMLDivElement | null>(null);
@@ -1170,7 +1345,7 @@ const ReportingTab = ({ certificates, users }: { certificates: Certificate[], us
         return [...new Set(certYears)].sort((a, b) => b - a);
     }, [certificates]);
 
-    const allUserEmployees = useMemo(() => users.filter(u => u.role !== 'admin' && !u.isSuspended), [users]);
+    const allUserEmployees = useMemo(() => users.filter(u => u.role !== 'admin' && u.role !== 'reporter' && !u.isSuspended), [users]);
     // FIX: Add filter(Boolean) to ensure all department values are non-empty strings, preventing potential type errors.
     const allDepartments = useMemo(() => ['Tất cả', ...new Set(allUserEmployees.map(u => u.department).filter(Boolean))], [allUserEmployees]);
     
@@ -1462,14 +1637,15 @@ const ReportingTab = ({ certificates, users }: { certificates: Certificate[], us
 
             const getFlatRowsWithStt = () => {
                 const allRows: (string | number)[][] = [];
+                let sttCounter = 1;
                 if (sortedReportData.detailedRows) {
-                    sortedReportData.detailedRows.forEach((userRow, userIndex) => {
+                    sortedReportData.detailedRows.forEach((userRow) => {
                         if (userRow.certificates.length === 0) {
-                            allRows.push([userIndex + 1, userRow.name, '', '', userRow.totalCredits]);
+                            allRows.push([sttCounter++, userRow.name, '', '', userRow.totalCredits]);
                         } else {
                             userRow.certificates.forEach((cert, certIndex) => {
                                 if (certIndex === 0) {
-                                    allRows.push([userIndex + 1, userRow.name, cert.name, cert.credits, userRow.totalCredits]);
+                                    allRows.push([sttCounter++, userRow.name, cert.name, cert.credits, userRow.totalCredits]);
                                 } else {
                                     allRows.push(['', '', cert.name, cert.credits, '']);
                                 }
@@ -1510,6 +1686,53 @@ const ReportingTab = ({ certificates, users }: { certificates: Certificate[], us
                 let ws_data: (string | number)[][] = [exportHeaders];
                 ws_data.push(...getFlatRowsWithStt());
                 const ws = XLSX.utils.aoa_to_sheet(ws_data);
+
+                // --- START: Styling ---
+                const borderStyle = {
+                    top: { style: "thin", color: { auto: 1 } },
+                    bottom: { style: "thin", color: { auto: 1 } },
+                    left: { style: "thin", color: { auto: 1 } },
+                    right: { style: "thin", color: { auto: 1 } }
+                };
+
+                const headerStyle = {
+                    font: { bold: true },
+                    border: borderStyle,
+                    fill: { fgColor: { rgb: "E0E0E0" } }
+                };
+
+                const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:A1');
+                
+                // Loop through all cells in the worksheet range to apply styles
+                for (let R = range.s.r; R <= range.e.r; ++R) {
+                    for (let C = range.s.c; C <= range.e.c; ++C) {
+                        const cell_address = XLSX.utils.encode_cell({ c: C, r: R });
+                        let cell = ws[cell_address];
+                        
+                        // Create cell object if it doesn't exist to ensure styles are applied
+                        if (!cell) {
+                            ws[cell_address] = { t: 's', v: '' };
+                            cell = ws[cell_address];
+                        }
+
+                        if (R === 0) { // Header row
+                            cell.s = headerStyle;
+                        } else {
+                            // Apply border to all other cells
+                            if (!cell.s) cell.s = {};
+                            cell.s.border = borderStyle;
+                        }
+                    }
+                }
+                
+                // Auto-fit columns
+                const colWidths = ws_data[0].map((_, i) => {
+                    const maxLength = ws_data.reduce((max, row) => Math.max(max, String(row[i] || '').length), 0);
+                    return { wch: Math.max(10, maxLength + 2) }; // Min width 10, plus padding
+                });
+                ws['!cols'] = colWidths;
+                // --- END: Styling ---
+
                 XLSX.utils.book_append_sheet(wb, ws, "BaoCao");
                 XLSX.writeFile(wb, "bao_cao.xlsx");
             }
@@ -1523,17 +1746,26 @@ const ReportingTab = ({ certificates, users }: { certificates: Certificate[], us
                             <tr key={`${userIndex}-${certIndex}`}>
                                 {certIndex === 0 && (
                                     <>
-                                        <td rowSpan={userRow.certificates.length} data-label="STT">{userIndex + 1}</td>
-                                        <td rowSpan={userRow.certificates.length} data-label={sortedReportData.headers[0]}>{userRow.name}</td>
+                                        <td rowSpan={userRow.certificates.length || 1} data-label="STT">{userIndex + 1}</td>
+                                        <td rowSpan={userRow.certificates.length || 1} data-label={sortedReportData.headers[0]}>{userRow.name}</td>
                                     </>
                                 )}
                                 <td data-label={sortedReportData.headers[1]}>{cert.name}</td>
                                 <td data-label={sortedReportData.headers[2]}>{cert.credits}</td>
                                 {certIndex === 0 && (
-                                    <td rowSpan={userRow.certificates.length} data-label={sortedReportData.headers[3]}>{userRow.totalCredits}</td>
+                                    <td rowSpan={userRow.certificates.length || 1} data-label={sortedReportData.headers[3]}>{userRow.totalCredits}</td>
                                 )}
                             </tr>
                         ))}
+                         {userRow.certificates.length === 0 && (
+                             <tr>
+                                 <td data-label="STT">{userIndex + 1}</td>
+                                 <td data-label={sortedReportData.headers[0]}>{userRow.name}</td>
+                                 <td data-label={sortedReportData.headers[1]}></td>
+                                 <td data-label={sortedReportData.headers[2]}></td>
+                                 <td data-label={sortedReportData.headers[3]}>{userRow.totalCredits}</td>
+                             </tr>
+                         )}
                     </React.Fragment>
                 ));
             }
@@ -1573,14 +1805,20 @@ const ReportingTab = ({ certificates, users }: { certificates: Certificate[], us
         return (<div className="report-output">
             <div className="report-output-header">
                 <h4>{sortedReportData.title}</h4>
-                <div className="export-dropdown">
-                    <button className="btn btn-export">
-                        <span className="material-icons">download</span>
-                        Xuất báo cáo
+                <div className="report-actions">
+                     <button className="btn btn-secondary" onClick={() => window.print()}>
+                        <span className="material-icons">print</span>
+                        In báo cáo
                     </button>
-                    <div className="export-dropdown-content">
-                        <button onClick={() => handleExport('excel')}>Xuất Excel (.xlsx)</button>
-                        <button onClick={() => handleExport('csv')}>Xuất CSV (.csv)</button>
+                    <div className="export-dropdown">
+                        <button className="btn btn-export">
+                            <span className="material-icons">download</span>
+                            Xuất báo cáo
+                        </button>
+                        <div className="export-dropdown-content">
+                            <button onClick={() => handleExport('excel')}>Xuất Excel (.xlsx)</button>
+                            <button onClick={() => handleExport('csv')}>Xuất CSV (.csv)</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1616,6 +1854,8 @@ const ReportingTab = ({ certificates, users }: { certificates: Certificate[], us
         const [suggestions, setSuggestions] = useState<User[]>([]);
         const [isSuggestionsVisible, setIsSuggestionsVisible] = useState(false);
         const [expandedCertId, setExpandedCertId] = useState<number | null>(null);
+        const [editingCertificate, setEditingCertificate] = useState<Certificate | null>(null);
+        const [confirmation, setConfirmation] = useState<{message: string, onConfirm: () => void} | null>(null);
         const searchRef = useRef<HTMLDivElement>(null);
     
         const allUserEmployees = useMemo(() => {
@@ -1668,6 +1908,27 @@ const ReportingTab = ({ certificates, users }: { certificates: Certificate[], us
                 .filter(c => c.userId === selectedUser.id)
                 .sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
         }, [certificates, selectedUser]);
+
+        const handleEdit = (e: React.MouseEvent, cert: Certificate) => {
+            e.stopPropagation();
+            setEditingCertificate(cert);
+        };
+
+        const handleDelete = (e: React.MouseEvent, certId: number, certName: string) => {
+            e.stopPropagation();
+            setConfirmation({
+                message: `Bạn có chắc chắn muốn xóa chứng chỉ "${certName}" của ${selectedUser?.name} không?`,
+                onConfirm: () => {
+                    onDeleteCertificate(certId);
+                    setConfirmation(null);
+                }
+            });
+        };
+
+        const handleSaveCertificate = (updatedCert: Certificate, newImageFile?: File, newImageOrientation?: number) => {
+            onUpdateCertificate(updatedCert, newImageFile, newImageOrientation);
+            setEditingCertificate(null);
+        };
         
         return (
             <div className="inspection-view-container">
@@ -1686,10 +1947,10 @@ const ReportingTab = ({ certificates, users }: { certificates: Certificate[], us
                         />
                          {isSuggestionsVisible && suggestions.length > 0 && (
                             <ul className="inspection-suggestions-list">
-                                {suggestions.map(user => (
-                                    <li key={user.id} onMouseDown={() => handleSelectUser(user)}>
-                                        <span>{user.name}</span>
-                                        <small>{user.department}</small>
+                                {suggestions.map(userSuggestion => (
+                                    <li key={userSuggestion.id} onMouseDown={() => handleSelectUser(userSuggestion)}>
+                                        <span>{userSuggestion.name}</span>
+                                        <small>{userSuggestion.department}</small>
                                     </li>
                                 ))}
                             </ul>
@@ -1714,6 +1975,7 @@ const ReportingTab = ({ certificates, users }: { certificates: Certificate[], us
                                             <th>Tên chứng chỉ</th>
                                             <th>Ngày cấp</th>
                                             <th>Số tiết</th>
+                                            {user.role === 'admin' && <th>Hành động</th>}
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -1729,14 +1991,27 @@ const ReportingTab = ({ certificates, users }: { certificates: Certificate[], us
                                                     <td data-label="Tên chứng chỉ">{cert.name}</td>
                                                     <td data-label="Ngày cấp">{cert.date ? new Date(cert.date + 'T00:00:00').toLocaleDateString('vi-VN') : ''}</td>
                                                     <td data-label="Số tiết">{cert.credits}</td>
+                                                    {user.role === 'admin' && (
+                                                        <td data-label="Hành động">
+                                                            <div className="certificate-actions" style={{ justifyContent: 'flex-start', gap: '8px' }}>
+                                                                <button className="btn-icon" title="Sửa" onClick={(e) => handleEdit(e, cert)}>
+                                                                    <span className="material-icons">edit</span>
+                                                                </button>
+                                                                <button className="btn-icon btn-delete" title="Xóa" onClick={(e) => handleDelete(e, cert.id, cert.name)}>
+                                                                    <span className="material-icons">delete</span>
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    )}
                                                 </tr>
                                                 {expandedCertId === cert.id && (
                                                     <tr className="expanded-image-row" id={`cert-image-${cert.id}`}>
-                                                        <td colSpan={4}>
+                                                        <td colSpan={user.role === 'admin' ? 5 : 4}>
                                                             <div className="expanded-image">
                                                                 <img
                                                                     src={cert.image || 'https://via.placeholder.com/600x400.png?text=Kh%C3%B4ng+th%E1%BB%83+t%E1%BA%A3i+%E1%BA%A3nh'}
                                                                     alt={cert.name}
+                                                                    style={{ transform: `rotate(${getRotationFromExif(cert.imageOrientation)}deg)` }}
                                                                     onError={(e) => {
                                                                         const target = e.target as HTMLImageElement;
                                                                         target.onerror = null;
@@ -1759,6 +2034,20 @@ const ReportingTab = ({ certificates, users }: { certificates: Certificate[], us
                         </>
                     )}
                 </div>
+                 {editingCertificate && (
+                    <EditCertificateModal
+                        certificate={editingCertificate}
+                        onSave={handleSaveCertificate}
+                        onCancel={() => setEditingCertificate(null)}
+                    />
+                )}
+                {confirmation && (
+                    <ConfirmationModal
+                        message={confirmation.message}
+                        onConfirm={confirmation.onConfirm}
+                        onCancel={() => setConfirmation(null)}
+                    />
+                )}
             </div>
         );
     };
@@ -1846,7 +2135,7 @@ const ReportingTab = ({ certificates, users }: { certificates: Certificate[], us
 
 const UserModal = ({ user, onSave, onCancel, allDepartments, isSelfEdit = false }: { user: User | null, onSave: (data: NewUser, id?: number) => void, onCancel: () => void, allDepartments: string[], isSelfEdit?: boolean }) => {
     const [formData, setFormData] = useState({
-        username: '', name: '', department: '', role: 'user' as 'user' | 'admin' | 'reporter', password: '',
+        username: '', name: '', department: '', role: 'user' as 'user' | 'admin' | 'reporter' | 'reporter_user', password: '',
         dateOfBirth: '', position: '', title: '', practiceCertificateNumber: '', practiceCertificateIssueDate: '',
         isSuspended: false
     });
@@ -1878,7 +2167,7 @@ const UserModal = ({ user, onSave, onCancel, allDepartments, isSelfEdit = false 
         if (name === 'isSuspended') {
              setFormData(prev => ({ ...prev, [name]: value === 'true' }));
         } else {
-            setFormData(prev => ({ ...prev, [name]: value }));
+            setFormData(prev => ({ ...prev, [name]: value as any }));
         }
     };
 
@@ -1952,7 +2241,8 @@ const UserModal = ({ user, onSave, onCancel, allDepartments, isSelfEdit = false 
                                 <label>Vai trò</label>
                                 <select name="role" value={formData.role} onChange={handleChange}>
                                     <option value="user">Nhân viên</option>
-                                    <option value="reporter">Báo cáo</option>
+                                    <option value="reporter">Báo cáo viên</option>
+                                    <option value="reporter_user">Nhân viên + Báo cáo</option>
                                     <option value="admin">Quản trị</option>
                                 </select>
                             </div>
@@ -2065,6 +2355,16 @@ const AdminTab = ({
         }
     };
 
+    const getRoleName = (role: User['role']) => {
+        switch (role) {
+            case 'admin': return 'Quản trị';
+            case 'reporter': return 'Báo cáo viên';
+            case 'reporter_user': return 'Nhân viên + Báo cáo';
+            case 'user':
+            default: return 'Nhân viên';
+        }
+    };
+
     return (
       <div>
         <h2>Quản trị hệ thống</h2>
@@ -2120,7 +2420,7 @@ const AdminTab = ({
                     <td>{user.username}</td>
                     <td>{user.name}</td>
                     <td>{user.department}</td>
-                    <td>{user.role === 'admin' ? 'Quản trị' : user.role === 'reporter' ? 'Báo cáo' : 'Nhân viên'}</td>
+                    <td>{getRoleName(user.role)}</td>
                     <td>{user.isSuspended ? 'Tạm ngừng' : 'Hoạt động'}</td>
                     <td className="actions">
                       <button title="Sửa" onClick={() => handleOpenEditUser(user)}><span className="material-icons">edit</span></button>
@@ -2341,7 +2641,8 @@ interface MainAppProps {
     certificates: Certificate[];
     onLogout: () => void;
     onAddCertificate: (cert: NewCertificatePayload) => Promise<void>;
-    onUpdateCertificate: (cert: Certificate, newImageFile?: File) => Promise<void>;
+    onUpdateCertificate: (cert: Certificate, newImageFile?: File, newImageOrientation?: number) => Promise<void>;
+    onUpdateCertificateOrientation: (certId: number, orientation: number) => Promise<void>;
     onDeleteCertificate: (id: number) => Promise<void>;
     onAddUser: (user: NewUser) => Promise<void>;
     onUpdateUser: (user: User) => Promise<void>;
@@ -2354,7 +2655,7 @@ interface MainAppProps {
 }
 
 const MainApp = (props: MainAppProps) => {
-  const { user, users, certificates, onLogout, onAddCertificate, onUpdateCertificate, onDeleteCertificate, onAddUser, onUpdateUser, onDeleteUser, onChangePassword, googleSheetUrl, googleFolderUrl, complianceStartYear, onUpdateComplianceYear } = props;
+  const { user, users, certificates, onLogout, onAddCertificate, onUpdateCertificate, onUpdateCertificateOrientation, onDeleteCertificate, onAddUser, onUpdateUser, onDeleteUser, onChangePassword, googleSheetUrl, googleFolderUrl, complianceStartYear, onUpdateComplianceYear } = props;
   const mainContentRef = useRef<HTMLElement>(null);
   const [activeTab, setActiveTab] = useState('personal_info');
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
@@ -2363,8 +2664,14 @@ const MainApp = (props: MainAppProps) => {
   const allDepartments = useMemo(() => [...new Set(users.map(u => u.department).filter(Boolean))].sort(), [users]);
   
   useEffect(() => {
-    setActiveTab('personal_info');
-  }, [user.id]);
+      // Set default tab based on role
+      if (user.role === 'reporter') {
+          setActiveTab('reporting');
+      } else {
+          setActiveTab('personal_info');
+      }
+  }, [user.id, user.role]);
+
 
   const handleTabClick = (tabId: string) => {
     setActiveTab(tabId);
@@ -2402,19 +2709,27 @@ const MainApp = (props: MainAppProps) => {
     { id: 'admin', label: 'Quản trị', icon: 'admin_panel_settings' },
   ];
   
-  let tabs = [...userTabs];
-  if (user.role === 'reporter') {
-      tabs = [...userTabs, ...reportingAndAITabs];
-  } else if (user.role === 'admin') {
-      tabs = [...userTabs, ...reportingAndAITabs, ...adminOnlyTabs];
-  }
+  const tabs = useMemo(() => {
+    switch (user.role) {
+      case 'user':
+        return userTabs;
+      case 'reporter':
+        return reportingAndAITabs;
+      case 'reporter_user':
+        return [...userTabs, ...reportingAndAITabs];
+      case 'admin':
+        return [...userTabs, ...reportingAndAITabs, ...adminOnlyTabs];
+      default:
+        return [];
+    }
+  }, [user.role]);
 
   const renderTabContent = () => {
     switch(activeTab) {
       case 'personal_info': return <PersonalInfoTab user={user} certificates={certificates} onEdit={() => setIsEditUserModalOpen(true)} complianceStartYear={complianceStartYear} />;
-      case 'profile': return <ProfileTab certificates={certificates} user={user} onDeleteCertificate={onDeleteCertificate} onUpdateCertificate={onUpdateCertificate} />;
+      case 'profile': return <ProfileTab certificates={certificates} user={user} onDeleteCertificate={onDeleteCertificate} onUpdateCertificate={onUpdateCertificate} onUpdateCertificateOrientation={onUpdateCertificateOrientation} />;
       case 'entry': return <DataEntryTab onAddCertificate={handleAddCertificateAndSwitchTab} />;
-      case 'reporting': return <ReportingTab certificates={certificates} users={users}/>;
+      case 'reporting': return <ReportingTab certificates={certificates} users={users} user={user} onUpdateCertificate={onUpdateCertificate} onDeleteCertificate={onDeleteCertificate} onUpdateCertificateOrientation={onUpdateCertificateOrientation} />;
       case 'ai_assistant': return <AIAssistantTab certificates={certificates} users={users} />;
       case 'admin': return <AdminTab users={users} onAddUser={onAddUser} onUpdateUser={onUpdateUser} onDeleteUser={onDeleteUser} googleSheetUrl={googleSheetUrl} googleFolderUrl={googleFolderUrl} complianceStartYear={complianceStartYear} onUpdateComplianceYear={onUpdateComplianceYear} />;
       default: return null;
@@ -2568,14 +2883,18 @@ const App = () => {
         return null;
     }
     
-    const roleRaw = findProp(rawUser, ['role', 'Role']);
+    const roleRaw = String(findProp(rawUser, ['role', 'Role'])).toLowerCase().trim();
+    let finalRole: User['role'] = 'user';
+    if (roleRaw === 'admin') finalRole = 'admin';
+    else if (roleRaw === 'reporter') finalRole = 'reporter';
+    else if (roleRaw === 'reporter_user') finalRole = 'reporter_user';
 
     return {
         id: parsedId,
         username: String(username),
         name: String(findProp(rawUser, ['name', 'Name']) || ''),
         department: String(findProp(rawUser, ['department', 'Department']) || ''),
-        role: (roleRaw === 'admin') ? 'admin' : (roleRaw === 'reporter') ? 'reporter' : 'user',
+        role: finalRole,
         password: findProp(rawUser, ['password', 'Password']),
         passwordChangedAt: findProp(rawUser, ['passwordChangedAt', 'passwordchangedat', 'PasswordChangedAt']),
         dateOfBirth: parseDateToISO(String(findProp(rawUser, ['dateOfBirth', 'dateofbirth', 'DateOfBirth']) || '')),
@@ -2610,6 +2929,7 @@ const App = () => {
     const creditsRaw = String(findProp(rawCert, ['credits', 'Credits']) || '0').replace(',', '.');
     const creditsParsed = parseFloat(creditsRaw);
     const imageId = extractGoogleDriveId(String(imageUrlOrId || ''));
+    const orientation = findProp(rawCert, ['imageorientation', 'imageOrientation']);
 
     return {
         id: parsedId,
@@ -2617,7 +2937,8 @@ const App = () => {
         name: String(findProp(rawCert, ['name', 'Name']) || ''),
         date: parseDateToISO(String(findProp(rawCert, ['date', 'Date']) || '')),
         credits: isNaN(creditsParsed) ? 0 : creditsParsed,
-        image: imageId ? `https://lh3.googleusercontent.com/d/${imageId}` : ''
+        image: imageId ? `https://lh3.googleusercontent.com/d/${imageId}` : '',
+        imageOrientation: orientation ? parseInt(String(orientation), 10) : 1,
     };
   };
 
@@ -2651,7 +2972,7 @@ const App = () => {
             if(!loadedData) return;
 
             const { sanitizedUsers } = loadedData;
-            const storedUserJson = localStorage.getItem('currentUser');
+            const storedUserJson = sessionStorage.getItem('currentUser');
             if (storedUserJson) {
                 const storedUser = JSON.parse(storedUserJson);
                 const matchingUser = sanitizedUsers.find(u => u.id === Number(storedUser.id));
@@ -2690,7 +3011,7 @@ const App = () => {
 
             if (matchedUser) {
                 setCurrentUser(matchedUser);
-                localStorage.setItem('currentUser', JSON.stringify(matchedUser));
+                sessionStorage.setItem('currentUser', JSON.stringify(matchedUser));
                 if (!matchedUser.passwordChangedAt) {
                     setIsForcePasswordChange(true);
                 }
@@ -2710,7 +3031,7 @@ const App = () => {
 
   const handleLogout = useCallback(() => {
     setCurrentUser(null);
-    localStorage.removeItem('currentUser');
+    sessionStorage.removeItem('currentUser');
   }, []);
 
   const handleAddCertificate = useCallback(async (newCert: NewCertificatePayload) => {
@@ -2732,7 +3053,7 @@ const App = () => {
     }
   }, [currentUser]);
 
-  const handleUpdateCertificate = useCallback(async (updatedCert: Certificate, newImageFile?: File) => {
+  const handleUpdateCertificate = useCallback(async (updatedCert: Certificate, newImageFile?: File, newImageOrientation?: number) => {
     setIsProcessing(true);
     try {
         let payload: any = { ...updatedCert };
@@ -2753,6 +3074,7 @@ const App = () => {
             payload.newImageBase64 = imageBase64;
             payload.newImageType = newImageFile.type;
             payload.newImageName = newImageName;
+            payload.orientation = newImageOrientation;
         }
         const updatedCertFromApi = await api.updateCertificate(payload);
         const sanitizedCert = sanitizeCertificate(updatedCertFromApi);
@@ -2767,6 +3089,23 @@ const App = () => {
         setIsProcessing(false);
     }
   }, [currentUser]);
+
+  const handleUpdateCertificateOrientation = useCallback(async (certId: number, orientation: number) => {
+      setIsProcessing(true);
+      try {
+          const updatedCertFromApi = await api.updateCertificateOrientation(certId, orientation);
+          const sanitizedCert = sanitizeCertificate(updatedCertFromApi);
+          if (sanitizedCert) {
+              setCertificates(prev => prev.map(c => c.id === sanitizedCert.id ? sanitizedCert : c));
+          }
+      } catch (error: any) {
+          console.error("Failed to update certificate orientation:", error);
+          alert(`Lưu hướng xoay thất bại: ${error.message}`);
+          throw error;
+      } finally {
+          setIsProcessing(false);
+      }
+  }, []);
 
   const handleDeleteCertificate = useCallback(async (id: number) => {
     setIsProcessing(true);
@@ -2808,7 +3147,7 @@ const App = () => {
             setUsers(prev => prev.map(u => u.id === sanitizedUser.id ? sanitizedUser : u));
             if (currentUser && currentUser.id === sanitizedUser.id) {
                 setCurrentUser(sanitizedUser);
-                localStorage.setItem('currentUser', JSON.stringify(sanitizedUser));
+                sessionStorage.setItem('currentUser', JSON.stringify(sanitizedUser));
             }
         }
         alert('Cập nhật người dùng thành công!');
@@ -2845,7 +3184,7 @@ const App = () => {
           if (currentUser && currentUser.id === userId) {
                 const updatedUser = { ...currentUser, passwordChangedAt: new Date().toISOString() };
                 setCurrentUser(updatedUser);
-                localStorage.setItem('currentUser', JSON.stringify(updatedUser));
+                sessionStorage.setItem('currentUser', JSON.stringify(updatedUser));
             }
           alert('Đổi mật khẩu thành công!');
       } catch (error: any) {
@@ -2886,7 +3225,7 @@ const App = () => {
       if (currentUser) {
           const updatedUser = { ...currentUser, passwordChangedAt: new Date().toISOString() };
           setCurrentUser(updatedUser);
-          localStorage.setItem('currentUser', JSON.stringify(updatedUser));
+          sessionStorage.setItem('currentUser', JSON.stringify(updatedUser));
           setIsForcePasswordChange(false);
       }
   };
@@ -2913,6 +3252,7 @@ const App = () => {
               onLogout={handleLogout}
               onAddCertificate={handleAddCertificate}
               onUpdateCertificate={handleUpdateCertificate}
+              onUpdateCertificateOrientation={handleUpdateCertificateOrientation}
               onDeleteCertificate={handleDeleteCertificate}
               onAddUser={handleAddUser}
               onUpdateUser={handleUpdateUser}
