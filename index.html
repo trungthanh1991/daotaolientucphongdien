@@ -34,7 +34,7 @@
 <script>
 // ===================================================================================
 //
-//      GOOGLE APPS SCRIPT BACKEND (HYBRID FAST v4.1 - Orientation Support)
+//      GOOGLE APPS SCRIPT BACKEND (HYBRID FAST v4.2 - Self-healing Column)
 //
 // ===================================================================================
 
@@ -287,14 +287,29 @@ function handleDeleteUser(id){
 // ===================================================================================
 // 🎓 CERTIFICATE MANAGEMENT
 // ===================================================================================
+
+// NEW HELPER FUNCTION to ensure the orientation column exists
+function ensureCertOrientationColumn() {
+  const headers = normalizeHeaders(certSheet.getRange(1, 1, 1, certSheet.getLastColumn()).getValues()[0]);
+  if (headers.indexOf('imageorientation') === -1) {
+    Logger.log("⚠️ Cột 'ImageOrientation' không tồn tại. Đang tự động tạo...");
+    // Add the header to the next available column
+    certSheet.getRange(1, headers.length + 1).setValue('ImageOrientation');
+    // Important: Invalidate the cache because the sheet structure has changed
+    clearCache();
+    Logger.log("✅ Đã tạo thành công cột 'ImageOrientation'.");
+  }
+}
+
 function handleAddCertificate(p){
   const lock=LockService.getScriptLock();
   if(!lock.tryLock(4000)) throw new Error("Hệ thống đang bận.");
   try{
+    ensureCertOrientationColumn(); // Ensure column exists before adding new data
     const blob=Utilities.newBlob(Utilities.base64Decode(p.imageBase64),p.imageType,p.imageName);
     const file=driveFolder.createFile(blob);
     const url=file.getUrl();
-    const rec={id:p.id,userid:p.userId,name:p.name,date:p.date,credits:p.credits,image:url,updatedat:new Date().toISOString(), imageorientation: p.orientation || 0 };
+    const rec={id:p.id,userid:p.userId,name:p.name,date:p.date,credits:p.credits,image:url,updatedat:new Date().toISOString(), imageorientation: p.orientation || 1 };
     const headers=normalizeHeaders(certSheet.getRange(1,1,1,certSheet.getLastColumn()).getValues()[0]);
     const row=headers.map(h=>rec[h]||'');
     certSheet.appendRow(row);
@@ -306,6 +321,7 @@ function handleUpdateCertificate(p){
   const lock=LockService.getScriptLock();
   if(!lock.tryLock(4000)) throw new Error("Hệ thống đang bận.");
   try{
+    ensureCertOrientationColumn(); // Ensure column exists before updating
     const data=certSheet.getDataRange().getValues();
     const headers=normalizeHeaders(data[0]);
     const idCol=headers.indexOf('id');
@@ -323,9 +339,9 @@ function handleUpdateCertificate(p){
           if(p[h]!==undefined) row[idx]=p[h];
         });
         if(newUrl && imgCol>-1) row[imgCol]=newUrl;
-        if(newUrl && orientCol > -1) row[orientCol] = p.orientation || 0; // Reset orientation for new image
+        if(newUrl && orientCol > -1) row[orientCol] = p.orientation || 1; // Reset orientation for new image
         certSheet.getRange(i+1,1,1,row.length).setValues([row]);
-        return {...p,image:newUrl||p.image, imageorientation: p.orientation || 0};
+        return {...p,image:newUrl||p.image, imageorientation: p.orientation || 1};
       }
     }
     throw new Error("Không tìm thấy chứng chỉ.");
@@ -350,11 +366,12 @@ function handleUpdateCertificateOrientation(id, orientation) {
   const lock=LockService.getScriptLock();
   if(!lock.tryLock(3000)) throw new Error("Hệ thống đang bận.");
   try{
+    ensureCertOrientationColumn(); // Ensure column exists before updating
     const data = certSheet.getDataRange().getValues();
     const headers = normalizeHeaders(data[0]);
     const idCol = headers.indexOf('id');
     const orientCol = headers.indexOf('imageorientation');
-    if (orientCol === -1) throw new Error("Cột 'ImageOrientation' không tồn tại trong sheet.");
+    // No need to check for orientCol === -1 because the helper function guarantees it exists.
     
     for (let i = 1; i < data.length; i++) {
       if (data[i][idCol] == id) {
