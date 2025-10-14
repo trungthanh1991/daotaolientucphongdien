@@ -217,6 +217,24 @@ const getRotationFromExif = (orientation: number | undefined): number => {
     }
 };
 
+// Helper function to normalize text for searching (remove accents, lowercase)
+const normalizeText = (text: string): string => {
+    if (!text) return '';
+    return text
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+};
+
+const isUserCompliant = (user: User, credits: number): { compliant: boolean; required: number } => {
+    const isPharmacist = user.title && normalizeText(user.title).includes('duoc si');
+    const requiredCredits = isPharmacist ? 8 : 120;
+    return {
+        compliant: credits >= requiredCredits,
+        required: requiredCredits,
+    };
+};
+
 const ConfirmationModal = ({ message, onConfirm, onCancel, confirmText = 'Xác nhận', cancelText = 'Hủy' }: { message: string, onConfirm: () => void, onCancel: () => void, confirmText?: string, cancelText?: string }) => {
     return (
         <div className="modal-overlay" onClick={onCancel}>
@@ -599,32 +617,19 @@ const ChangePasswordModal = ({ onSave, onCancel, userId, isForced = false }: { o
 
 type ViewMode = 'grid' | 'list' | 'timeline';
 
-// Helper function to normalize text for searching (remove accents, lowercase)
-const normalizeText = (text: string): string => {
-    return text
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "");
-};
-
-const MultiYearSelector = ({ allYears, selectedYears, onSelectionChange }: { allYears: number[], selectedYears: number[], onSelectionChange: (years: number[]) => void }) => {
+const MultiSelector = ({ allItems, selectedItems, onSelectionChange, placeholder }: { allItems: string[], selectedItems: string[], onSelectionChange: (items: string[]) => void, placeholder: string }) => {
     const [isOpen, setIsOpen] = useState(false);
     const wrapperRef = useRef<HTMLDivElement>(null);
 
-    const handleYearToggle = (year: number) => {
-        const newSelection = selectedYears.includes(year)
-            ? selectedYears.filter(y => y !== year)
-            : [...selectedYears, year];
-        onSelectionChange(newSelection.sort((a, b) => b - a));
+    const handleItemToggle = (item: string) => {
+        const newSelection = selectedItems.includes(item)
+            ? selectedItems.filter(i => i !== item)
+            : [...selectedItems, item];
+        onSelectionChange(newSelection.sort());
     };
 
-    const handleSelectAll = () => {
-        onSelectionChange(allYears);
-    };
-
-    const handleDeselectAll = () => {
-        onSelectionChange([]);
-    };
+    const handleSelectAll = () => { onSelectionChange(allItems); };
+    const handleDeselectAll = () => { onSelectionChange([]); };
     
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
@@ -636,11 +641,12 @@ const MultiYearSelector = ({ allYears, selectedYears, onSelectionChange }: { all
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, [wrapperRef]);
 
+    const displayLabel = selectedItems.length === 0 ? `Tất cả (${placeholder})` : selectedItems.length === allItems.length ? `Tất cả (${placeholder})` : selectedItems.join(', ');
 
     return (
         <div className="multi-select-container" ref={wrapperRef}>
             <button type="button" className="multi-select-button" onClick={() => setIsOpen(!isOpen)}>
-                <span>{selectedYears.length > 0 ? selectedYears.join(', ') : 'Tất cả các năm'}</span>
+                <span>{displayLabel}</span>
                 <span className="material-icons">arrow_drop_down</span>
             </button>
             {isOpen && (
@@ -649,14 +655,14 @@ const MultiYearSelector = ({ allYears, selectedYears, onSelectionChange }: { all
                         <button type="button" onClick={handleSelectAll}>Tất cả</button>
                         <button type="button" onClick={handleDeselectAll}>Bỏ chọn</button>
                     </div>
-                    {allYears.map(year => (
-                        <label key={year}>
+                    {allItems.map(item => (
+                        <label key={item}>
                             <input
                                 type="checkbox"
-                                checked={selectedYears.includes(year)}
-                                onChange={() => handleYearToggle(year)}
+                                checked={selectedItems.includes(item)}
+                                onChange={() => handleItemToggle(item)}
                             />
-                            {year}
+                            {item}
                         </label>
                     ))}
                 </div>
@@ -665,9 +671,8 @@ const MultiYearSelector = ({ allYears, selectedYears, onSelectionChange }: { all
     );
 };
 
-
 const ProfileTab = ({ certificates, user, onDeleteCertificate, onUpdateCertificate, onUpdateCertificateOrientation }: { certificates: Certificate[], user: User, onDeleteCertificate: (id: number) => void, onUpdateCertificate: (cert: Certificate, newImageFile?: File, newImageOrientation?: number) => void, onUpdateCertificateOrientation: (certId: number, orientation: number) => void }) => {
-    const [selectedYears, setSelectedYears] = useState<number[]>([]);
+    const [selectedYears, setSelectedYears] = useState<string[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [editingCertificate, setEditingCertificate] = useState<Certificate | null>(null);
     const [confirmation, setConfirmation] = useState<{message: string, onConfirm: () => void} | null>(null);
@@ -681,8 +686,8 @@ const ProfileTab = ({ certificates, user, onDeleteCertificate, onUpdateCertifica
     }, [certificates, user.id]);
 
     const years = useMemo(() => {
-        const allYears = userCertificates.map(c => new Date(c.date).getFullYear());
-        return [...new Set(allYears)].sort((a, b) => b - a);
+        const allYears = userCertificates.map(c => new Date(c.date).getFullYear().toString());
+        return [...new Set(allYears)].sort((a, b) => Number(b) - Number(a));
     }, [userCertificates]);
 
     const filteredCertificates = useMemo(() => {
@@ -690,7 +695,7 @@ const ProfileTab = ({ certificates, user, onDeleteCertificate, onUpdateCertifica
         const searchWords = normalizedSearch.split(' ').filter(w => w);
 
         return userCertificates.filter(c => {
-            const yearMatch = selectedYears.length === 0 || selectedYears.includes(new Date(c.date).getFullYear());
+            const yearMatch = selectedYears.length === 0 || selectedYears.includes(new Date(c.date).getFullYear().toString());
             
             if (!yearMatch) return false;
             if (searchWords.length === 0) return true;
@@ -859,10 +864,11 @@ const ProfileTab = ({ certificates, user, onDeleteCertificate, onUpdateCertifica
                     <div className="filter-group">
                         <label>Năm:</label>
                         <div style={{ minWidth: '200px' }}>
-                            <MultiYearSelector
-                                allYears={years}
-                                selectedYears={selectedYears}
+                             <MultiSelector
+                                allItems={years}
+                                selectedItems={selectedYears}
                                 onSelectionChange={setSelectedYears}
+                                placeholder="Năm"
                             />
                         </div>
                     </div>
@@ -1319,13 +1325,14 @@ const AIAssistantTab = ({ certificates, users }: { certificates: Certificate[], 
 
 
 
-const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDeleteCertificate, onUpdateCertificateOrientation }: { 
+const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDeleteCertificate, onUpdateCertificateOrientation, complianceStartYear }: { 
     certificates: Certificate[], 
     users: User[],
     user: User,
     onUpdateCertificate: (cert: Certificate, newImageFile?: File, newImageOrientation?: number) => void,
     onDeleteCertificate: (id: number) => void,
     onUpdateCertificateOrientation: (certId: number, orientation: number) => void,
+    complianceStartYear: number;
 }) => {
     const chartRef = useRef<HTMLCanvasElement | null>(null);
     const chartInstance = useRef<Chart | null>(null);
@@ -1333,21 +1340,19 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
     const [chartYear, setChartYear] = useState(new Date().getFullYear());
     const [chartType, setChartType] = useState<ChartType>('bar');
     const [generatedReport, setGeneratedReport] = useState<ReportData | null>(null);
-    const [complianceYears, setComplianceYears] = useState([new Date().getFullYear()]);
-    const [reportYears, setReportYears] = useState([new Date().getFullYear()]);
-    const [reportDepartment, setReportDepartment] = useState('Tất cả');
-    const [reportDepartmentYears, setReportDepartmentYears] = useState<number[]>([]);
+    const [reportYears, setReportYears] = useState<string[]>([new Date().getFullYear().toString()]);
+    const [reportDepartments, setReportDepartments] = useState<string[]>([]);
+    const [reportDepartmentYears, setReportDepartmentYears] = useState<string[]>([]);
     const [sortConfig, setSortConfig] = useState<{ key: string | null; direction: 'ascending' | 'descending' }>({ key: null, direction: 'ascending' });
     const [activeSubTab, setActiveSubTab] = useState('reporting');
 
     const allYears = useMemo(() => {
-        const certYears = certificates.map(c => new Date(c.date).getFullYear());
-        return [...new Set(certYears)].sort((a, b) => b - a);
+        const certYears = certificates.map(c => new Date(c.date).getFullYear().toString());
+        return [...new Set(certYears)].sort((a, b) => Number(b) - Number(a));
     }, [certificates]);
 
     const allUserEmployees = useMemo(() => users.filter(u => u.role !== 'admin' && u.role !== 'reporter' && !u.isSuspended), [users]);
-    // FIX: Add filter(Boolean) to ensure all department values are non-empty strings, preventing potential type errors.
-    const allDepartments = useMemo(() => ['Tất cả', ...new Set(allUserEmployees.map(u => u.department).filter(Boolean))], [allUserEmployees]);
+    const allDepartments = useMemo(() => [...new Set(allUserEmployees.map(u => u.department).filter(Boolean))].sort(), [allUserEmployees]);
     
      useEffect(() => {
         if (!chartRef.current || activeSubTab !== 'reporting') return;
@@ -1369,7 +1374,7 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
         if (chartType === 'pie' || chartType === 'doughnut') {
             certsInYear.forEach(cert => {
                 const user = allUserEmployees.find(u => u.id === cert.userId);
-                if (user) {
+                if (user && user.department) {
                     dataByDepartment[user.department] = (dataByDepartment[user.department] || 0) + 1;
                 }
             });
@@ -1407,9 +1412,8 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
         if (totalUsers === 0) return '0%';
         const certsInYear = certificates.filter(c => new Date(c.date).getFullYear() === chartYear);
         const compliantUsers = allUserEmployees.filter(user => {
-            // FIX: Ensure credits are treated as numbers in the reduce function to prevent type errors.
             const userCredits = certsInYear.filter(c => c.userId === user.id).reduce((sum, c) => sum + Number(c.credits || 0), 0);
-            return userCredits >= 120;
+            return isUserCompliant(user, userCredits).compliant;
         }).length;
         return `${((compliantUsers / totalUsers) * 100).toFixed(0)}%`;
     }, [chartYear, certificates, allUserEmployees, totalUsers]);
@@ -1417,22 +1421,25 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
 
     const generateReport = (type: string, options: any) => {
         let reportData: ReportData = { title: '', headers: [], rows: [] };
+        
+        const startYear = complianceStartYear;
+        const endYear = startYear + 4;
 
         switch (type) {
             case 'compliance': {
-                if (!options.years || options.years.length === 0) {
-                    alert('Vui lòng chọn ít nhất một năm.'); return;
-                }
-                reportData.title = `Báo cáo tuân thủ 120 tiết (Năm: ${options.years.join(', ')})`;
-                reportData.headers = ['Họ tên', 'Tổng số tiết', 'Trạng thái'];
-                const certsInYears = certificates.filter(c => options.years.includes(new Date(c.date).getFullYear()));
+                reportData.title = `Báo cáo tuân thủ (Chu kỳ: ${startYear} - ${endYear})`;
+                reportData.headers = ['Họ tên', 'Chức danh', 'Tổng số tiết', 'Yêu cầu', 'Trạng thái'];
+                const certsInCycle = certificates.filter(c => {
+                    const certYear = new Date(c.date).getFullYear();
+                    return certYear >= startYear && certYear <= endYear;
+                });
                 reportData.rows = allUserEmployees.map((user) => {
-                    // FIX: Ensure credits are treated as numbers in the reduce function to prevent type errors.
-                    const totalCredits = certsInYears
+                    const totalCredits = certsInCycle
                         .filter(c => c.userId === user.id)
                         .reduce((sum, c) => sum + Number(c.credits || 0), 0);
-                    const status = totalCredits >= 120 ? 'Đạt' : 'Chưa đạt';
-                    return [user.name, totalCredits, status];
+                    const { compliant, required } = isUserCompliant(user, totalCredits);
+                    const status = compliant ? 'Đạt' : 'Chưa đạt';
+                    return [user.name, user.title || '', totalCredits, required, status];
                 });
                 break;
             }
@@ -1442,7 +1449,7 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
                 }
                 reportData.title = `Báo cáo tổng hợp theo năm ${options.years.join(', ')}`;
                 reportData.headers = ['Họ tên', 'Tổng số tiết'];
-                const certsInYears = certificates.filter(c => options.years.includes(new Date(c.date).getFullYear()));
+                const certsInYears = certificates.filter(c => options.years.includes(new Date(c.date).getFullYear().toString()));
                 const creditsByUser = allUserEmployees.map(u => ({ id: u.id, name: u.name, totalCredits: 0 }));
                 certsInYears.forEach(cert => {
                     const user = creditsByUser.find(u => u.id === cert.userId);
@@ -1458,7 +1465,7 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
                 }
                 reportData.title = `Báo cáo chi tiết theo năm ${options.years.join(', ')}`;
                 reportData.headers = ['Họ tên', 'Tên chứng chỉ', 'Số tiết', 'Tổng tiết'];
-                const certsInYears = certificates.filter(c => options.years.includes(new Date(c.date).getFullYear()));
+                const certsInYears = certificates.filter(c => options.years.includes(new Date(c.date).getFullYear().toString()));
 
                 const detailedRows: DetailedRowUser[] = [];
                 const sortedUsers = [...allUserEmployees].sort((a, b) => a.name.localeCompare(b.name, 'vi'));
@@ -1482,39 +1489,29 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
                 break;
             }
             case 'department': {
-                const isAllDepts = options.department === 'Tất cả';
+                 if (!options.departments || options.departments.length === 0) {
+                    alert('Vui lòng chọn ít nhất một Khoa/Phòng.'); return;
+                }
                 const yearFilterActive = options.years && options.years.length > 0;
                 let yearTitle = yearFilterActive ? ` (Năm: ${options.years.join(', ')})` : ' (Tất cả các năm)';
-                reportData.title = `Báo cáo theo Khoa/Phòng: ${options.department}${yearTitle}`;
+                reportData.title = `Báo cáo theo Khoa/Phòng: ${options.departments.join(', ')}${yearTitle}`;
                 reportData.headers = ['Họ tên', 'Tổng số tiết'];
 
                 const relevantCerts = yearFilterActive
-                    ? certificates.filter(c => options.years.includes(new Date(c.date).getFullYear()))
+                    ? certificates.filter(c => options.years.includes(new Date(c.date).getFullYear().toString()))
                     : certificates;
                 
-                if (isAllDepts) {
-                    const departments: string[] = [...new Set(allUserEmployees.map(u => u.department))].sort();
-                    reportData.groups = departments.map(dept => {
-                        const usersInDept = allUserEmployees.filter(u => u.department === dept);
-                        const deptRows = usersInDept.map((user) => {
-                            // FIX: Ensure credits are treated as numbers in the reduce function to prevent type errors.
-                            const totalCredits = relevantCerts
-                                .filter(c => c.userId === user.id)
-                                .reduce((sum, c) => sum + Number(c.credits || 0), 0);
-                            return [user.name, totalCredits];
-                        });
-                        return { groupTitle: dept, rows: deptRows };
-                    });
-                } else {
-                    const usersInDept = allUserEmployees.filter(u => u.department === options.department);
-                    reportData.rows = usersInDept.map((user) => {
-                        // FIX: Ensure credits are treated as numbers in the reduce function to prevent type errors.
+                reportData.groups = options.departments.sort().map((dept: string) => {
+                    const usersInDept = allUserEmployees.filter(u => u.department === dept);
+                    const deptRows = usersInDept.map((user) => {
                         const totalCredits = relevantCerts
                             .filter(c => c.userId === user.id)
                             .reduce((sum, c) => sum + Number(c.credits || 0), 0);
                         return [user.name, totalCredits];
                     });
-                }
+                    return { groupTitle: dept, rows: deptRows };
+                });
+                reportData.rows = undefined;
                 break;
             }
             case 'date_range': {
@@ -1601,7 +1598,7 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
             const aValue = a[sortKeyIndex];
             const bValue = b[sortKeyIndex];
             
-            const numericHeaders = ['Tổng số tiết', 'Số tiết'];
+            const numericHeaders = ['Tổng số tiết', 'Số tiết', 'Yêu cầu'];
             if (numericHeaders.includes(generatedReport.headers[sortKeyIndex])) {
                  const numA = parseFloat(String(aValue).replace(/,/g, ''));
                  const numB = parseFloat(String(bValue).replace(/,/g, ''));
@@ -1799,7 +1796,7 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
             return null;
         };
 
-        const sortableColumns = ['Họ tên', 'Tổng số tiết', 'Trạng thái', 'Tên chứng chỉ', 'Số tiết'];
+        const sortableColumns = ['Họ tên', 'Chức danh', 'Tổng số tiết', 'Yêu cầu', 'Trạng thái', 'Tên chứng chỉ', 'Số tiết'];
         const allHeaders = ['STT', ...sortedReportData.headers];
 
         return (<div className="report-output">
@@ -2082,21 +2079,20 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
                     <aside className="reporting-controls-panel">
                         <h3>Tạo báo cáo</h3>
                         <div className="report-form">
-                            <label>Báo cáo tuân thủ 120 tiết</label>
-                            <MultiYearSelector allYears={allYears} selectedYears={complianceYears} onSelectionChange={setComplianceYears} />
-                            <button onClick={() => generateReport('compliance', { years: complianceYears })}>Tạo</button>
+                            <label>Báo cáo tuân thủ theo chu kỳ</label>
+                            <button onClick={() => generateReport('compliance', {})}>Tạo</button>
                         </div>
                          <div className="report-form">
                             <label>Báo cáo tổng hợp/chi tiết theo năm</label>
-                            <MultiYearSelector allYears={allYears} selectedYears={reportYears} onSelectionChange={setReportYears} />
+                            <MultiSelector allItems={allYears} selectedItems={reportYears} onSelectionChange={setReportYears} placeholder="Năm"/>
                             <button onClick={() => generateReport('year_summary', {years: reportYears})}>Tạo tổng hợp</button>
                             <button onClick={() => generateReport('year_detail', {years: reportYears})}>Tạo chi tiết</button>
                         </div>
                         <div className="report-form">
                             <label>Báo cáo theo Khoa/Phòng</label>
-                            <select value={reportDepartment} onChange={e => setReportDepartment(e.target.value)}>{allDepartments.map(d => <option key={d} value={d}>{d}</option>)}</select>
-                            <MultiYearSelector allYears={allYears} selectedYears={reportDepartmentYears} onSelectionChange={setReportDepartmentYears} />
-                            <button onClick={() => generateReport('department', {department: reportDepartment, years: reportDepartmentYears})}>Tạo</button>
+                             <MultiSelector allItems={allDepartments} selectedItems={reportDepartments} onSelectionChange={setReportDepartments} placeholder="Khoa/Phòng"/>
+                            <MultiSelector allItems={allYears} selectedItems={reportDepartmentYears} onSelectionChange={setReportDepartmentYears} placeholder="Năm (tùy chọn)"/>
+                            <button onClick={() => generateReport('department', {departments: reportDepartments, years: reportDepartmentYears})}>Tạo</button>
                         </div>
                         <div className="report-form">
                             <label>Báo cáo theo khoảng ngày</label>
@@ -2560,15 +2556,17 @@ const PersonalInfoTab = ({ user, certificates, onEdit, complianceStartYear }: { 
         });
 
         const accumulatedCredits = relevantCerts.reduce((sum, cert) => sum + Number(cert.credits || 0), 0);
-        const remainingCredits = Math.max(0, 120 - accumulatedCredits);
-        const accumulatedCreditsFormatted = Number.isInteger(accumulatedCredits) ? accumulatedCredits : accumulatedCredits.toFixed(1);
-        const remainingCreditsFormatted = Number.isInteger(remainingCredits) ? remainingCredits : remainingCredits.toFixed(1);
+        const { required } = isUserCompliant(user, accumulatedCredits);
+        const remainingCredits = Math.max(0, required - accumulatedCredits);
+        
+        const formatNumber = (num: number) => Number.isInteger(num) ? num : num.toFixed(1);
 
         return {
             startYear,
             endYear,
-            accumulatedCredits: accumulatedCreditsFormatted,
-            remainingCredits: remainingCreditsFormatted
+            accumulatedCredits: formatNumber(accumulatedCredits),
+            requiredCredits: required,
+            remainingCredits: formatNumber(remainingCredits)
         };
     }, [user, certificates, complianceStartYear]);
 
@@ -2579,7 +2577,7 @@ const PersonalInfoTab = ({ user, certificates, onEdit, complianceStartYear }: { 
                  <h2>Trang cá nhân</h2>
                  <div className="compliance-marquee">
                     <p>
-                        Chu kỳ {complianceData.startYear}-{complianceData.endYear}: Đã tích lũy {complianceData.accumulatedCredits}/120 tiết.
+                        Chu kỳ {complianceData.startYear}-{complianceData.endYear}: Đã tích lũy {complianceData.accumulatedCredits}/{complianceData.requiredCredits} tiết.
                         Cần thêm {complianceData.remainingCredits} tiết.
                     </p>
                  </div>
@@ -2729,7 +2727,7 @@ const MainApp = (props: MainAppProps) => {
       case 'personal_info': return <PersonalInfoTab user={user} certificates={certificates} onEdit={() => setIsEditUserModalOpen(true)} complianceStartYear={complianceStartYear} />;
       case 'profile': return <ProfileTab certificates={certificates} user={user} onDeleteCertificate={onDeleteCertificate} onUpdateCertificate={onUpdateCertificate} onUpdateCertificateOrientation={onUpdateCertificateOrientation} />;
       case 'entry': return <DataEntryTab onAddCertificate={handleAddCertificateAndSwitchTab} />;
-      case 'reporting': return <ReportingTab certificates={certificates} users={users} user={user} onUpdateCertificate={onUpdateCertificate} onDeleteCertificate={onDeleteCertificate} onUpdateCertificateOrientation={onUpdateCertificateOrientation} />;
+      case 'reporting': return <ReportingTab certificates={certificates} users={users} user={user} onUpdateCertificate={onUpdateCertificate} onDeleteCertificate={onDeleteCertificate} onUpdateCertificateOrientation={onUpdateCertificateOrientation} complianceStartYear={complianceStartYear} />;
       case 'ai_assistant': return <AIAssistantTab certificates={certificates} users={users} />;
       case 'admin': return <AdminTab users={users} onAddUser={onAddUser} onUpdateUser={onUpdateUser} onDeleteUser={onDeleteUser} googleSheetUrl={googleSheetUrl} googleFolderUrl={googleFolderUrl} complianceStartYear={complianceStartYear} onUpdateComplianceYear={onUpdateComplianceYear} />;
       default: return null;
