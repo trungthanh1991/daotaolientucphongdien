@@ -6,7 +6,7 @@ import { QRCodeCanvas } from "qrcode.react";
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbzSh3oyhzNh-NGm2lGxoP0CqMJjpsV9FZYlt443T0XDf91GsdUfSAU68P-OlEuJo6xtJw/exec'; 
 
 const api = {
-    request: async (method: 'POST', action?: string, payload?: any) => {
+    request: async (method: 'GET' | 'POST', action?: string, payload?: any) => {
         if (!BACKEND_URL) {
             alert('Lỗi cấu hình: Vui lòng dán URL của Google Apps Script Web App vào biến BACKEND_URL.');
             throw new Error("Backend URL not configured.");
@@ -14,13 +14,20 @@ const api = {
 
         const options: RequestInit = {
             method,
-            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            headers: {
+                'Content-Type': 'text/plain;charset=utf-8',
+            },
             redirect: 'follow',
-            body: JSON.stringify({ action, payload }),
         };
+
+        if (method === 'POST') {
+            options.body = JSON.stringify({ action, payload });
+        }
         
         try {
-            const response = await fetch(BACKEND_URL, options);
+            // For GET, the action is passed as a query parameter. The backend's doGet handles 'fetchInitialData' by default.
+            const url = method === 'GET' ? `${BACKEND_URL}?action=fetchInitialData` : BACKEND_URL;
+            const response = await fetch(url, options);
             const result = await response.json();
 
             if (!result.success) {
@@ -41,6 +48,8 @@ interface ReportUser {
     id: number;
     name: string;
     department: string;
+    role?: string;
+    isSuspended?: boolean;
 }
 
 interface Certificate {
@@ -76,13 +85,19 @@ export function Report() {
       setIsLoading(true);
       setError("");
       try {
-        // Fetch both users and all certificates in parallel
-        const [usersForReport, certData] = await Promise.all([
-          api.request("POST", "getUsersForReport", {}),
+        // Fetch users from the main initial data endpoint, and certificates separately.
+        const [initialData, certData] = await Promise.all([
+          api.request("GET", "fetchInitialData"), // Use GET for initial data, which contains the user list
           api.request("POST", "fetchCertificates", {})
         ]);
-        setAllUsers(usersForReport);
+        
+        // Filter users on the client-side to match the logic of the original 'getUsersForReport'
+        const reportUsers = (initialData.users || []).filter((u: ReportUser) => 
+            u.role !== 'admin' && u.role !== 'reporter' && !u.isSuspended
+        );
+        setAllUsers(reportUsers);
         setAllCertificates(certData);
+
       } catch (err: any) {
         setError(`Lỗi tải dữ liệu: ${err.message}`);
       } finally {
