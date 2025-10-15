@@ -65,6 +65,100 @@ interface Certificate {
 }
 
 
+// --- Data Sanitization Helpers (Copied from index.tsx) ---
+
+const findProp = (obj: any, propNames: string[]) => {
+    if (!obj) return undefined;
+    for (const name of propNames) {
+        if (obj[name] !== undefined && obj[name] !== null && obj[name] !== '') {
+            return obj[name];
+        }
+    }
+    return undefined;
+};
+
+const parseDateToISO = (dateString: string): string => {
+    if (!dateString || typeof dateString !== 'string') return '';
+    const d = new Date(dateString);
+    if (!isNaN(d.getTime())) {
+        try {
+            return d.toLocaleDateString('en-CA');
+        } catch(e) {
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+    }
+    const parts = dateString.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+    if (parts) {
+        const day = parts[1].padStart(2, '0');
+        const month = parts[2].padStart(2, '0');
+        const year = parts[3];
+        return `${year}-${month}-${day}`;
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+        return dateString;
+    }
+    return dateString;
+};
+
+const extractGoogleDriveId = (urlOrId: string): string => {
+    if (!urlOrId) return '';
+    if (/^[a-zA-Z0-9_-]{25,}$/.test(urlOrId)) {
+        return urlOrId;
+    }
+    const match = urlOrId.match(/[-\w]{25,}/);
+    return match ? match[0] : '';
+};
+
+const sanitizeUser = (rawUser: any): ReportUser | null => {
+    if (!rawUser) return null;
+    const id = findProp(rawUser, ['id', 'ID']);
+    const username = findProp(rawUser, ['username', 'Username']);
+    if (id === undefined || username === undefined) return null;
+    const parsedId = parseInt(String(id), 10);
+    if (isNaN(parsedId) || parsedId <= 0) return null;
+    
+    return {
+        id: parsedId,
+        name: String(findProp(rawUser, ['name', 'Name']) || ''),
+        department: String(findProp(rawUser, ['department', 'Department']) || ''),
+        role: String(findProp(rawUser, ['role', 'Role']) || 'user').toLowerCase().trim(),
+        isSuspended: String(findProp(rawUser, ['trạngthái', 'trangthai', 'isSuspended']) || '').trim() === 'Tạm ngừng',
+    };
+};
+
+const sanitizeCertificate = (rawCert: any): Certificate | null => {
+    if (!rawCert) return null;
+    const id = findProp(rawCert, ['id', 'ID']);
+    const userId = findProp(rawCert, ['userId', 'UserId', 'userid']);
+    if (id === undefined || userId === undefined) return null;
+
+    const parsedId = parseInt(String(id).replace(/\D/g, ''), 10);
+    const parsedUserId = parseInt(String(userId).replace(/\D/g, ''), 10);
+    if (isNaN(parsedId) || isNaN(parsedUserId) || parsedId <= 0 || parsedUserId <= 0) return null;
+
+    const creditsRaw = String(findProp(rawCert, ['credits', 'Credits']) || '0').replace(',', '.');
+    const creditsParsed = parseFloat(creditsRaw);
+    const imageUrlOrId = findProp(rawCert, ['image', 'Image', 'imageUrl']);
+    const imageId = extractGoogleDriveId(String(imageUrlOrId || ''));
+    const orientation = findProp(rawCert, ['imageorientation', 'imageOrientation']);
+
+    return {
+        id: parsedId,
+        userId: parsedUserId,
+        name: String(findProp(rawCert, ['name', 'Name']) || ''),
+        date: parseDateToISO(String(findProp(rawCert, ['date', 'Date']) || '')),
+        credits: isNaN(creditsParsed) ? 0 : creditsParsed,
+        image: imageId ? `https://lh3.googleusercontent.com/d/${imageId}` : '',
+        imageId: imageId || '',
+        imageOrientation: orientation ? parseInt(String(orientation), 10) : 1,
+    };
+};
+// --- End of Sanitization Helpers ---
+
+
 const Navigation = () => (
     <nav className="main-nav">
         <a href="?view=personal_info">Trang chính</a>
@@ -85,18 +179,20 @@ export function Report() {
       setIsLoading(true);
       setError("");
       try {
-        // Fetch users from the main initial data endpoint, and certificates separately.
         const [initialData, certData] = await Promise.all([
-          api.request("GET", "fetchInitialData"), // Use GET for initial data, which contains the user list
+          api.request("GET", "fetchInitialData"),
           api.request("POST", "fetchCertificates", {})
         ]);
         
-        // Filter users on the client-side to match the logic of the original 'getUsersForReport'
-        const reportUsers = (initialData.users || []).filter((u: ReportUser) => 
+        const sanitizedUsers = (initialData.users || []).map(sanitizeUser).filter((u): u is ReportUser => u !== null);
+        const sanitizedCerts = (certData || []).map(sanitizeCertificate).filter((c): c is Certificate => c !== null);
+
+        const reportUsers = sanitizedUsers.filter((u: ReportUser) => 
             u.role !== 'admin' && u.role !== 'reporter' && !u.isSuspended
         );
+
         setAllUsers(reportUsers);
-        setAllCertificates(certData);
+        setAllCertificates(sanitizedCerts);
 
       } catch (err: any) {
         setError(`Lỗi tải dữ liệu: ${err.message}`);
@@ -188,6 +284,13 @@ const UserDetailsModal = ({ user, allCertificates, onClose }: { user: ReportUser
     const availableYears = useMemo(() => [...new Set(userCerts.map(c => new Date(c.date).getFullYear()))].sort((a, b) => b - a), [userCerts]);
     const [selectedYear, setSelectedYear] = useState<number | null>(availableYears.length > 0 ? availableYears[0] : null);
 
+    useEffect(() => {
+        // If the selected year is no longer available (e.g. data changed), reset to the latest available year
+        if (selectedYear === null && availableYears.length > 0) {
+            setSelectedYear(availableYears[0]);
+        }
+    }, [availableYears, selectedYear]);
+
     const certsForYear = useMemo(() => selectedYear ? userCerts.filter(c => new Date(c.date).getFullYear() === selectedYear) : [], [userCerts, selectedYear]);
     const totalCreditsForYear = useMemo(() => certsForYear.reduce((sum, cert) => sum + Number(cert.credits || 0), 0), [certsForYear]);
 
@@ -230,7 +333,7 @@ const UserDetailsModal = ({ user, allCertificates, onClose }: { user: ReportUser
                                     ))
                                 ) : (
                                     <tr>
-                                        <td colSpan={3} style={{textAlign: 'center'}}>Không có chứng chỉ nào trong năm {selectedYear}.</td>
+                                        <td colSpan={3} style={{textAlign: 'center'}}>Không có chứng chỉ nào trong năm {selectedYear || ''}.</td>
                                     </tr>
                                 )}
                             </tbody>
@@ -266,13 +369,14 @@ export function ReportViewer({ id }: { id: string }) {
                 ]);
 
                 setReport(reportData);
-                setAllCertificates(certData);
+                const sanitizedCerts = (certData || []).map(sanitizeCertificate).filter((c): c is Certificate => c !== null);
+                setAllCertificates(sanitizedCerts);
 
-                // Parse content to get users
                 if (reportData.content) {
                     const parsedUsers = JSON.parse(reportData.content);
                     if (Array.isArray(parsedUsers)) {
-                        setReportUsers(parsedUsers);
+                        const sanitizedReportUsers = parsedUsers.map(sanitizeUser).filter((u): u is ReportUser => u !== null);
+                        setReportUsers(sanitizedReportUsers);
                     }
                 }
             } catch (err: any) {
