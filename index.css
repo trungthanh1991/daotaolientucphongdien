@@ -1745,8 +1745,17 @@ nav.tabs li button.active::before {
     border-radius: var(--border-radius);
     box-shadow: var(--shadow);
     margin-bottom: 20px;
-    border-left: 5px solid;
-    border-color: #6c757d; /* Default idle color */
+    border-left: 5px solid #6c757d; /* Default idle color */
+    transition: border-left-color 0.3s ease;
+}
+.api-status-card.loading {
+    border-left-color: #ffc107;
+}
+.api-status-card.success {
+    border-left-color: var(--success-color);
+}
+.api-status-card.error {
+    border-left-color: var(--danger-color);
 }
 .api-status-card h3 {
     margin-top: 0;

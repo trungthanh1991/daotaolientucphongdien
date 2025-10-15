@@ -52,19 +52,29 @@
     border-radius: var(--border-radius);
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+.filter-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .report-filters label {
     margin-bottom: 0;
+    font-weight: 500;
+    white-space: nowrap;
 }
 
-.report-filters select {
+.report-filters select,
+.report-filters input[type="search"] {
     padding: 8px;
     border-radius: 4px;
     border: 1px solid var(--border-color);
     font-size: 16px;
-    min-width: 200px;
+    min-width: 220px;
 }
 
 /* User Selection Table */
@@ -134,15 +144,18 @@
 /* Report Viewer Table */
 .report-viewer-table-container {
     margin-top: 24px;
+    /* Added for sticky header */
+    max-height: 60vh;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
 }
 
 .report-viewer-table {
     width: 100%;
     border-collapse: collapse;
-    border: 1px solid var(--border-color);
     border-radius: var(--border-radius);
     overflow: hidden;
-    box-shadow: var(--shadow);
 }
 
 .report-viewer-table th,
@@ -155,24 +168,14 @@
 .report-viewer-table th {
     background-color: var(--primary-color);
     color: white;
+    position: sticky;
+    top: 0;
+    z-index: 2;
 }
 .report-viewer-table tbody tr:nth-child(even) {
     background-color: #f8f9fa;
 }
 
-.report-viewer-table .btn-view {
-    padding: 6px 12px;
-    font-size: 14px;
-    background-color: var(--secondary-color);
-    color: white;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: background-color 0.2s;
-}
-.report-viewer-table .btn-view:hover {
-    background-color: #087a7d;
-}
 
 /* NEW: User Details Modal Styles */
 .report-viewer-modal-overlay {
@@ -223,6 +226,25 @@
     padding: 24px;
     overflow-y: auto;
 }
+
+.modal-summary {
+    padding: 12px;
+    background-color: #e0f2f1;
+    border: 1px solid #b2dfdb;
+    color: #004d40;
+    border-radius: var(--border-radius);
+    margin-bottom: 20px;
+    text-align: center;
+}
+.modal-summary p {
+    margin: 0;
+    font-size: 16px;
+}
+.modal-summary strong {
+    margin: 0 4px;
+    font-size: 18px;
+}
+
 .year-selector {
     display: flex;
     align-items: center;
@@ -231,6 +253,7 @@
     background-color: #f8f9fa;
     padding: 12px;
     border-radius: var(--border-radius);
+    flex-wrap: wrap;
 }
 .year-selector label {
     font-weight: 500;
@@ -280,6 +303,15 @@
     .report-filters {
         flex-direction: column;
         align-items: stretch;
+        gap: 12px;
+    }
+    .filter-item {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 4px;
+    }
+    .filter-item label {
+        text-align: left;
     }
     
     .user-selection-table thead, .report-viewer-table thead, .details-table thead {
@@ -338,7 +370,9 @@
     .report-viewer-table td:nth-of-type(1):before { content: "STT"; }
     .report-viewer-table td:nth-of-type(2):before { content: "Họ và Tên"; }
     .report-viewer-table td:nth-of-type(3):before { content: "Khoa/Phòng"; }
-    .report-viewer-table td:nth-of-type(4):before { content: "Hành động"; }
+    .report-viewer-table td:nth-of-type(4):before { content: "Tổng số tiết"; }
+    .report-viewer-table td:nth-of-type(5):before { content: "Hành động"; }
+
     
     .details-table td:nth-of-type(1):before { content: "STT"; }
     .details-table td:nth-of-type(2):before { content: "Tên chứng chỉ"; }

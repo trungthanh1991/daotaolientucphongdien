@@ -2240,31 +2240,31 @@ const ReportingTab = ({ certificates, users, user, onUpdateCertificate, onDelete
                         <h3>Tạo báo cáo</h3>
                         <div className="report-form">
                             <label>Báo cáo tuân thủ theo chu kỳ</label>
-                            <button onClick={() => generateReport('compliance', {})}>Tạo</button>
+                            <button className="btn btn-primary" onClick={() => generateReport('compliance', {})}>Tạo</button>
                         </div>
                          <div className="report-form">
                             <label>Báo cáo tổng hợp/chi tiết theo năm</label>
                             <MultiSelector allItems={allYears} selectedItems={reportYears} onSelectionChange={setReportYears} placeholder="Năm"/>
-                            <button onClick={() => generateReport('year_summary', {years: reportYears})}>Tạo tổng hợp</button>
-                            <button onClick={() => generateReport('year_detail', {years: reportYears})}>Tạo chi tiết</button>
+                            <button className="btn btn-primary" onClick={() => generateReport('year_summary', {years: reportYears})}>Tạo tổng hợp</button>
+                            <button className="btn btn-secondary" onClick={() => generateReport('year_detail', {years: reportYears})}>Tạo chi tiết</button>
                         </div>
                         <div className="report-form">
                             <label>Báo cáo theo Khoa/Phòng</label>
                              <MultiSelector allItems={allDepartments} selectedItems={reportDepartments} onSelectionChange={setReportDepartments} placeholder="Khoa/Phòng"/>
                             <MultiSelector allItems={allYears} selectedItems={reportDepartmentYears} onSelectionChange={setReportDepartmentYears} placeholder="Năm (tùy chọn)"/>
-                            <button onClick={() => generateReport('department', {departments: reportDepartments, years: reportDepartmentYears})}>Tạo</button>
+                            <button className="btn btn-primary" onClick={() => generateReport('department', {departments: reportDepartments, years: reportDepartmentYears})}>Tạo</button>
                         </div>
                         <div className="report-form">
                             <label>Báo cáo chi tiết theo Chức danh</label>
                              <MultiSelector allItems={titles} selectedItems={reportTitles} onSelectionChange={setReportTitles} placeholder="Chức danh"/>
                             <MultiSelector allItems={allYears} selectedItems={reportTitleYears} onSelectionChange={setReportTitleYears} placeholder="Năm (tùy chọn)"/>
-                            <button onClick={() => generateReport('title_detail', {titles: reportTitles, years: reportTitleYears})}>Tạo</button>
+                            <button className="btn btn-primary" onClick={() => generateReport('title_detail', {titles: reportTitles, years: reportTitleYears})}>Tạo</button>
                         </div>
                         <div className="report-form">
                             <label>Báo cáo theo khoảng ngày</label>
                             <input type="date" id="report-from-date" />
                             <input type="date" id="report-to-date" />
-                            <button onClick={() => generateReport('date_range', {from: (document.getElementById('report-from-date') as HTMLInputElement).value, to: (document.getElementById('report-to-date') as HTMLInputElement).value})}>Tạo</button>
+                            <button className="btn btn-primary" onClick={() => generateReport('date_range', {from: (document.getElementById('report-from-date') as HTMLInputElement).value, to: (document.getElementById('report-to-date') as HTMLInputElement).value})}>Tạo</button>
                         </div>
                     </aside>
 
@@ -2717,7 +2717,7 @@ const ApiStatusTab = () => {
 
     return (
         <div>
-            <div className="api-status-card">
+            <div className={`api-status-card ${sheetsStatus.status}`}>
                 <h3>Google Sheets API</h3>
                 <p>Kiểm tra khả năng đọc và ghi dữ liệu từ Google Sheets, là nơi lưu trữ chính của hệ thống.</p>
                 <div className="status-message-container">
@@ -2730,7 +2730,7 @@ const ApiStatusTab = () => {
                     {sheetsStatus.status === 'loading' ? 'Đang kiểm tra...' : 'Kiểm tra lại'}
                 </button>
             </div>
-            <div className="api-status-card">
+            <div className={`api-status-card ${primaryApiStatus.status}`}>
                 <h3>Google AI API (Trích xuất - Chính)</h3>
                 <p>Kiểm tra API Key chính của Google (`GOOGLE_API_KEY`), được sử dụng mặc định cho tính năng trích xuất thông tin từ hình ảnh.</p>
                  <div className="status-message-container">
@@ -2743,7 +2743,7 @@ const ApiStatusTab = () => {
                     {primaryApiStatus.status === 'loading' ? 'Đang kiểm tra...' : 'Kiểm tra lại'}
                 </button>
             </div>
-            <div className="api-status-card">
+            <div className={`api-status-card ${secondaryApiStatus.status}`}>
                 <h3>Google AI API (Trích xuất - Dự phòng)</h3>
                 <p>Kiểm tra API Key dự phòng của Google (`API_KEY`). Key này sẽ được sử dụng khi key chính gặp lỗi về hạn ngạch, giúp duy trì hoạt động của tính năng trích xuất.</p>
                  <div className="status-message-container">
@@ -2756,7 +2756,7 @@ const ApiStatusTab = () => {
                     {secondaryApiStatus.status === 'loading' ? 'Đang kiểm tra...' : 'Kiểm tra lại'}
                 </button>
             </div>
-             <div className="api-status-card">
+             <div className={`api-status-card ${assistantApiStatus.status}`}>
                 <h3>DeepSeek AI API (Trợ lý AI)</h3>
                 <p>Kiểm tra API Key của DeepSeek (`DEEPSEEK_API_KEY`), được sử dụng cho tính năng Trợ lý AI trong tab trò chuyện.</p>
                  <div className="status-message-container">
@@ -3051,6 +3051,17 @@ const App = () => {
         setSearchParams(new URLSearchParams(window.location.search));
     };
     window.addEventListener('popstate', handleUrlChange);
+    
+    // Handle initial URL state
+    const currentView = new URLSearchParams(window.location.search).get('view');
+    if (currentView && (currentView.startsWith('report-') || currentView.startsWith('report_'))) {
+        const newParams = new URLSearchParams(window.location.search);
+        newParams.set('view', 'report');
+        const newUrl = `${window.location.pathname}?${newParams.toString()}`;
+        window.history.replaceState({}, '', newUrl);
+        setSearchParams(newParams);
+    }
+
     return () => window.removeEventListener('popstate', handleUrlChange);
   }, []);
 
@@ -3215,8 +3226,9 @@ const App = () => {
     };
   };
 
-  const loadInitialData = useCallback(async () => {
+  const loadInitialData = useCallback(async (loadCerts: boolean) => {
     try {
+        // Fetch lightweight initial data
         const { users: rawUsers, titles: rawTitles, googleSheetUrl, googleFolderUrl, complianceStartYear: startYearFromApi } = await api.fetchInitialData();
         
         const sanitizedUsers = rawUsers.map(sanitizeUser).filter((u): u is User => u !== null);
@@ -3229,8 +3241,15 @@ const App = () => {
         if (startYearFromApi) {
             setComplianceStartYear(startYearFromApi);
         }
+
+        // Conditionally fetch heavy certificate data
+        if (loadCerts) {
+            const rawCertificates = await api.fetchCertificates();
+            const sanitizedCertificates = rawCertificates.map(sanitizeCertificate).filter((c): c is Certificate => c !== null);
+            setCertificates(sanitizedCertificates);
+        }
         
-        return { sanitizedUsers, sanitizedTitles };
+        return { sanitizedUsers }; // Return users for session check
     } catch (error) {
         console.error("Failed to load initial data:", error);
         throw error;
@@ -3242,14 +3261,15 @@ const App = () => {
     const initialLoad = async () => {
         setIsLoading(true);
         try {
-            const loadedData = await loadInitialData();
+            const storedUserJson = sessionStorage.getItem('currentUser');
+            const shouldLoadCerts = !!storedUserJson; // Only load certs if a user is likely logged in
+
+            const loadedData = await loadInitialData(shouldLoadCerts);
             if(!loadedData) return;
 
-            const { sanitizedUsers } = loadedData;
-            const storedUserJson = sessionStorage.getItem('currentUser');
             if (storedUserJson) {
                 const storedUser = JSON.parse(storedUserJson);
-                const matchingUser = sanitizedUsers.find(u => u.id === Number(storedUser.id));
+                const matchingUser = loadedData.sanitizedUsers.find(u => u.id === Number(storedUser.id));
                  if (matchingUser) {
                     setCurrentUser(matchingUser);
                     if (!matchingUser.passwordChangedAt) {
@@ -3270,22 +3290,6 @@ const App = () => {
     initialLoad();
   }, [loadInitialData]);
 
-    // Effect to load heavy certificate data after user is logged in
-    useEffect(() => {
-        const loadCertificates = async () => {
-            if (currentUser) {
-                try {
-                    const rawCertificates = await api.fetchCertificates();
-                    const sanitizedCertificates = rawCertificates.map(sanitizeCertificate).filter((c): c is Certificate => c !== null);
-                    setCertificates(sanitizedCertificates);
-                } catch (error) {
-                     console.error("Failed to load certificates:", error);
-                     alert('Lỗi: Không thể tải danh sách chứng chỉ.');
-                }
-            }
-        };
-        loadCertificates();
-    }, [currentUser]);
 
   const handleLogin = async (username: string, password: string) => {
     setLoginError('');
@@ -3303,6 +3307,12 @@ const App = () => {
         setGoogleSheetUrl(googleSheetUrl);
         setGoogleFolderUrl(googleFolderUrl);
         if (startYearFromApi) setComplianceStartYear(startYearFromApi);
+        
+        // Also fetch certificates after a successful login
+        const rawCertificates = await api.fetchCertificates();
+        const sanitizedCertificates = rawCertificates.map(sanitizeCertificate).filter((c): c is Certificate => c !== null);
+        setCertificates(sanitizedCertificates);
+
 
         // Find the current user from the newly loaded full list to ensure data consistency
         const matchedUser = sanitizedUsers.find(u => u.id === Number(loggedInUser.id));
@@ -3510,26 +3520,6 @@ const App = () => {
     }
   }, []);
 
-
-  if (isLoading) {
-    return (
-        <div className="loading-container">
-            <h1>Đang tải dữ liệu...</h1>
-        </div>
-    );
-  }
-  
-  const view = searchParams.get('view');
-  const id = searchParams.get('id');
-
-  if (view === 'report-viewer' && id) {
-    return <ReportViewer id={id} />;
-  }
-
-  if (view === 'report') {
-    return <Report />;
-  }
-
   const handleForcedPasswordSave = async (userId: number, oldPass: string, newPass: string) => {
       await handleChangePassword(userId, oldPass, newPass);
       // On success, update local state to exit forced change mode
@@ -3543,16 +3533,21 @@ const App = () => {
       }
   };
 
-  const defaultViewForCurrentUser = currentUser ? (currentUser.role === 'reporter' ? 'reporting' : 'personal_info') : 'login';
-  const activeView = view || defaultViewForCurrentUser;
+  const renderPageContent = () => {
+    const view = searchParams.get('view');
+    const id = searchParams.get('id');
 
-  return (
-    <>
-      <Navigation />
-      <div className={`app-container ${!currentUser ? 'login-view' : ''}`}>
-        {isProcessing && <ProcessingOverlay />}
-        {currentUser && isForcePasswordChange ? (
-             <div className="forced-password-change-container">
+    if (view === 'report-viewer' && id) {
+        return <ReportViewer id={id} allUsers={users} allCertificates={certificates} />;
+    }
+
+    if (view === 'report') {
+        return <Report allUsers={users} allCertificates={certificates} />;
+    }
+    
+    if (currentUser && isForcePasswordChange) {
+        return (
+            <div className="forced-password-change-container">
                 <ChangePasswordModal 
                     userId={currentUser.id}
                     onSave={handleForcedPasswordSave}
@@ -3560,35 +3555,64 @@ const App = () => {
                     isForced={true}
                 />
             </div>
-        ) : currentUser ? (
-          <MainApp 
-              user={currentUser} 
-              users={users}
-              certificates={certificates}
-              titles={titles}
-              activeTab={activeView}
-              onNavigate={navigate}
-              onLogout={handleLogout}
-              onAddCertificate={handleAddCertificate}
-              onUpdateCertificate={handleUpdateCertificate}
-              onUpdateCertificateOrientation={handleUpdateCertificateOrientation}
-              onDeleteCertificate={handleDeleteCertificate}
-              onAddUser={handleAddUser}
-              onUpdateUser={handleUpdateUser}
-              onDeleteUser={handleDeleteUser}
-              onChangePassword={handleChangePassword}
-              onUpdateComplianceYear={handleUpdateComplianceYear}
-              googleSheetUrl={googleSheetUrl}
-              googleFolderUrl={googleFolderUrl}
-              complianceStartYear={complianceStartYear}
-          />
-        ) : (
-          <LoginPage onLogin={handleLogin} error={loginError} />
-        )}
+        );
+    }
+    
+    if (currentUser) {
+        const defaultViewForCurrentUser = currentUser.role === 'reporter' ? 'reporting' : 'personal_info';
+        const activeView = view || defaultViewForCurrentUser;
+        return (
+            <MainApp 
+                user={currentUser} 
+                users={users}
+                certificates={certificates}
+                titles={titles}
+                activeTab={activeView}
+                onNavigate={navigate}
+                onLogout={handleLogout}
+                onAddCertificate={handleAddCertificate}
+                onUpdateCertificate={handleUpdateCertificate}
+                onUpdateCertificateOrientation={handleUpdateCertificateOrientation}
+                onDeleteCertificate={handleDeleteCertificate}
+                onAddUser={handleAddUser}
+                onUpdateUser={handleUpdateUser}
+                onDeleteUser={handleDeleteUser}
+                onChangePassword={handleChangePassword}
+                onUpdateComplianceYear={handleUpdateComplianceYear}
+                googleSheetUrl={googleSheetUrl}
+                googleFolderUrl={googleFolderUrl}
+                complianceStartYear={complianceStartYear}
+            />
+        );
+    }
+
+    return <LoginPage onLogin={handleLogin} error={loginError} />;
+  };
+
+
+  if (isLoading) {
+    return (
+        <div className="loading-container">
+            <h1>Đang tải dữ liệu...</h1>
+        </div>
+    );
+  }
+
+  const view = searchParams.get('view');
+  const isPublicReportView = view === 'report' || (view === 'report-viewer' && searchParams.has('id'));
+
+  return (
+    <>
+      {isPublicReportView && <Navigation />}
+      <div className={`app-container ${!currentUser && !isPublicReportView ? 'login-view' : ''}`}>
+        {isProcessing && <ProcessingOverlay />}
+        {renderPageContent()}
       </div>
-      <footer className="app-footer">
+      {(currentUser || isPublicReportView) && 
+        <footer className="app-footer">
           <p>Design by Nguyễn Trung Thành</p>
-      </footer>
+        </footer>
+      }
     </>
   );
 };
