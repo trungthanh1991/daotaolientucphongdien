@@ -269,29 +269,55 @@ function handleAddUser(u){
   }finally{ lock.releaseLock(); }
 }
 
-function handleUpdateUser(u){
-  const lock=LockService.getScriptLock();
-  if(!lock.tryLock(3000)) throw new Error("Hệ thống đang bận.");
-  try{
-    const data=userSheet.getDataRange().getValues();
-    const headers=normalizeHeaders(data[0]);
-    const idCol=headers.indexOf('id');
-    for(let i=1;i<data.length;i++){
-      if(data[i][idCol]==u.id){
-        const row=data[i];
-        headers.forEach((h,idx)=>{
-          if(u[h]!==undefined){
-            if(h==='password'&&(u[h]===''||u[h]==null)) return;
-            row[idx]=u[h];
+function handleUpdateUser(u) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) throw new Error("Hệ thống đang bận.");
+  try {
+    const data = userSheet.getDataRange().getValues();
+    const headers = normalizeHeaders(data[0]);
+    const idCol = headers.indexOf('id');
+
+    // Create a version of the payload with normalized keys for easy lookup
+    const normalizedPayload = {};
+    for (const key in u) {
+      if (Object.prototype.hasOwnProperty.call(u, key)) {
+        normalizedPayload[key.toLowerCase().replace(/\s+/g, "")] = u[key];
+      }
+    }
+
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][idCol] == u.id) { // Match by original ID from payload
+        const row = data[i];
+        
+        headers.forEach((h, idx) => {
+          // Use the normalized payload for comparison
+          if (normalizedPayload[h] !== undefined) {
+            // Skip updating password if it's empty
+            if (h === 'password' && (normalizedPayload[h] === '' || normalizedPayload[h] === null)) {
+              return;
+            }
+            row[idx] = normalizedPayload[h];
           }
         });
-        userSheet.getRange(i+1,1,1,row.length).setValues([row]);
-        const safe={...u}; delete safe.password; return safe;
+
+        // Special handling for 'isSuspended' which maps to 'trạngthái' column
+        const statusCol = headers.indexOf('trạngthái');
+        if (statusCol > -1 && normalizedPayload['issuspended'] !== undefined) {
+          row[statusCol] = normalizedPayload['issuspended'] ? 'Tạm ngừng' : 'Hoạt động';
+        }
+
+        userSheet.getRange(i + 1, 1, 1, row.length).setValues([row]);
+        const safe = { ...u };
+        delete safe.password;
+        return safe;
       }
     }
     throw new Error("Không tìm thấy người dùng.");
-  }finally{ lock.releaseLock(); }
+  } finally {
+    lock.releaseLock();
+  }
 }
+
 
 function handleDeleteUser(id){
   const lock=LockService.getScriptLock();
@@ -493,7 +519,7 @@ function callGemini(url, options) {
     try {
       const errorJson = JSON.parse(errorContent);
       if (responseCode === 429) {
-        errorMessage = "Hạn ngạch sử dụng tính năng AI miễn phí đã hết cho hôm nay. Vui lòng thử lại vào ngày mai hoặc nhập dữ liệu thủ công.";
+        errorMessage = "Tính năng trích xuất ảnh không thành công, ĐỀ NGHỊ NHẬP LIỆU THỦ CÔNG";
       } else if (errorJson.error && errorJson.error.message) {
         errorMessage = "Lỗi từ Gemini API: " + errorJson.error.message;
       } else {
@@ -523,7 +549,7 @@ function callGeminiWithFallback(endpoint, body) {
     } catch (e) {
       Logger.log("Lỗi với API_KEY chính: " + e.message);
       const errorMessage = e.message.toLowerCase();
-      const isRecoverableError = errorMessage.includes("quota") || errorMessage.includes("permission denied") || errorMessage.includes("api key not valid");
+      const isRecoverableError = errorMessage.includes("quota") || errorMessage.includes("permission denied") || errorMessage.includes("api key not valid") || errorMessage.includes("thủ công");
       
       if (isRecoverableError && API_KEY1) {
         Logger.log("Thử lại với API_KEY1...");
@@ -560,7 +586,7 @@ function callGeminiForExtraction(imageBase64, imageType) {
 - "credits": Tổng số tiết học hoặc tín chỉ. Chỉ lấy số.
 
 **CÁC QUY TẮC BẮT BUỘC:**
-1.  **KHÔNG LẤY TÊN NGƯỜI:** Tên chứng chỉ TUYỆT ĐỐI KHÔNG PHẢI là tên người. Bỏ qua các tên riêng như "Ông Nguyễn Văn A" hoặc "Bà Trần Thị B".
+1.  **KHÔNG LẤY TÊN NGƯỜOI:** Tên chứng chỉ TUYỆT ĐỐI KHÔNG PHẢI là tên người. Bỏ qua các tên riêng như "Ông Nguyễn Văn A" hoặc "Bà Trần Thị B".
 2.  **TÌM TỪ KHÓA:** Tên khóa học thường được tìm thấy trong các cụm từ như: "hoàn thành khóa học", "chứng nhận đã hoàn thành chương trình", "đào tạo liên tục về", "lớp tập huấn", "bồi dưỡng chuyên môn về". Hãy tìm nội dung chính của khóa học đó. Ví dụ: Trong câu "Chứng nhận Ông/Bà Nguyễn Văn An đã hoàn thành khóa học Kỹ năng giao tiếp", kết quả phải là {"name": "Kỹ năng giao tiếp"}.
 3.  **ƯU TIÊN CHỮ LỚN:** Nếu các quy tắc trên không áp dụng được, hãy lấy dòng chữ có kích thước lớn nhất, nổi bật nhất làm tên chứng chỉ.
 4.  **KHÔNG TÌM THẤY THÌ BỎ TRỐNG:** Nếu bạn không thể chắc chắn tìm thấy bất kỳ thông tin nào phù hợp (ví dụ: hình ảnh không phải là chứng chỉ hoặc không thể đọc được), hãy trả về một đối tượng JSON với các trường có giá trị rỗng (""). **Tuyệt đối không tự bịa ra thông tin.**`;
@@ -628,19 +654,22 @@ function handleExtractFromImageId(p) {
 }
 
 
-function handleCheckGeminiApi(){
-  const API_KEY = PropertiesService.getScriptProperties().getProperty('API_KEY');
-  const API_KEY1 = PropertiesService.getScriptProperties().getProperty('API_KEY1');
-  
-  if(!API_KEY && !API_KEY1) {
-    throw new Error("Chưa cấu hình API Key nào của Gemini (API_KEY hoặc API_KEY1).");
+function handleCheckGeminiApi() {
+  try {
+    // Một cuộc gọi đơn giản, chi phí thấp để xác minh API key và hạn ngạch.
+    callGeminiWithFallback('models/gemini-2.5-flash:generateContent', {
+      contents: [{ parts: [{ text: "hi" }] }]
+    });
+    // Nếu cuộc gọi trên không ném ra lỗi, có nghĩa là API đang hoạt động.
+    return { message: "Hạn ngạch AI còn hiệu lực. Các tính năng AI đang hoạt động." };
+  } catch(e) {
+    // Thông báo hạn ngạch tùy chỉnh hiện nằm trong hàm callGemini, vì vậy chúng ta kiểm tra nó ở đây.
+    if (e.message && e.message.includes("ĐỀ NGHỊ NHẬP LIỆU THỦ CÔNG")) {
+       throw new Error("Hạn ngạch AI miễn phí trong ngày đã hết. Tính năng trích xuất tự động và trợ lý AI sẽ không hoạt động.");
+    }
+    // Đối với các lỗi khác (ví dụ: key không hợp lệ từ callGeminiWithFallback)
+    throw new Error("Lỗi kiểm tra Gemini API: " + e.message);
   }
-  
-  let messages = [];
-  if (API_KEY) messages.push("Đã tìm thấy API_KEY chính.");
-  if (API_KEY1) messages.push("Đã tìm thấy API_KEY1 dự phòng.");
-
-  return {success:true, message: messages.join(' ')};
 }
 
 function handleAskAI(p){
