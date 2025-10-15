@@ -2669,7 +2669,8 @@ const AdminTab = ({
 
 const ApiStatusTab = () => {
     const [sheetsStatus, setSheetsStatus] = useState({ status: 'idle', message: 'Chưa kiểm tra' });
-    const [geminiStatus, setGeminiStatus] = useState({ status: 'idle', message: 'Chưa kiểm tra' });
+    const [googleApiStatus, setGoogleApiStatus] = useState({ status: 'idle', message: 'Chưa kiểm tra' });
+    const [deepseekApiStatus, setDeepseekApiStatus] = useState({ status: 'idle', message: 'Chưa kiểm tra' });
 
     const checkSheets = async () => {
         setSheetsStatus({ status: 'loading', message: 'Đang kiểm tra...' });
@@ -2681,13 +2682,23 @@ const ApiStatusTab = () => {
         }
     };
 
-    const checkGemini = async () => {
-        setGeminiStatus({ status: 'loading', message: 'Đang kiểm tra...' });
+    const checkGoogleApi = async () => {
+        setGoogleApiStatus({ status: 'loading', message: 'Đang kiểm tra...' });
         try {
-            const response = await api.request('POST', 'checkGeminiApi');
-            setGeminiStatus({ status: 'success', message: response.message || 'Kết nối Gemini API thành công.' });
+            const response = await api.request('POST', 'checkSpecificGeminiApiKey', { keyName: 'primary' });
+            setGoogleApiStatus({ status: 'success', message: response.message || 'Kết nối thành công.' });
         } catch (error: any) {
-            setGeminiStatus({ status: 'error', message: `Lỗi kết nối Gemini API: ${error.message}` });
+            setGoogleApiStatus({ status: 'error', message: `Lỗi: ${error.message}` });
+        }
+    };
+
+    const checkDeepseekApi = async () => {
+        setDeepseekApiStatus({ status: 'loading', message: 'Đang kiểm tra...' });
+        try {
+            const response = await api.request('POST', 'checkSpecificGeminiApiKey', { keyName: 'secondary' });
+            setDeepseekApiStatus({ status: 'success', message: response.message || 'Kết nối thành công.' });
+        } catch (error: any) {
+            setDeepseekApiStatus({ status: 'error', message: `Lỗi: ${error.message}` });
         }
     };
 
@@ -2707,16 +2718,29 @@ const ApiStatusTab = () => {
                 </button>
             </div>
             <div className="api-status-card">
-                <h3>Gemini AI API</h3>
-                <p>Kiểm tra xem API Key của Gemini đã được cấu hình trên máy chủ hay chưa. Cần thiết cho các tính năng Trợ lý AI và trích xuất dữ liệu từ hình ảnh.</p>
+                <h3>Google AI API (Chính)</h3>
+                <p>Kiểm tra Google API Key. Đây là API được sử dụng mặc định cho các tính năng AI. Nếu hạn ngạch của API này hết, hệ thống sẽ tự động chuyển sang API dự phòng.</p>
                  <div className="status-message-container">
-                    <div className={`status-message ${geminiStatus.status}`}>
-                       <strong>Trạng thái:</strong> {geminiStatus.message}
+                    <div className={`status-message ${googleApiStatus.status}`}>
+                       <strong>Trạng thái:</strong> {googleApiStatus.message}
                     </div>
                 </div>
-                <button className="btn" onClick={checkGemini} disabled={geminiStatus.status === 'loading'}>
+                <button className="btn" onClick={checkGoogleApi} disabled={googleApiStatus.status === 'loading'}>
                     <span className="material-icons">sync</span>
-                    {geminiStatus.status === 'loading' ? 'Đang kiểm tra...' : 'Kiểm tra lại'}
+                    {googleApiStatus.status === 'loading' ? 'Đang kiểm tra...' : 'Kiểm tra lại'}
+                </button>
+            </div>
+            <div className="api-status-card">
+                <h3>DeepSeek AI API (Dự phòng)</h3>
+                <p>Kiểm tra DeepSeek API Key. API này sẽ được sử dụng khi API chính gặp lỗi về hạn ngạch, giúp duy trì hoạt động của các tính năng AI.</p>
+                 <div className="status-message-container">
+                    <div className={`status-message ${deepseekApiStatus.status}`}>
+                       <strong>Trạng thái:</strong> {deepseekApiStatus.message}
+                    </div>
+                </div>
+                <button className="btn" onClick={checkDeepseekApi} disabled={deepseekApiStatus.status === 'loading'}>
+                    <span className="material-icons">sync</span>
+                    {deepseekApiStatus.status === 'loading' ? 'Đang kiểm tra...' : 'Kiểm tra lại'}
                 </button>
             </div>
         </div>
