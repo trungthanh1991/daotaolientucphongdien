@@ -16,7 +16,8 @@
     "react": "https://aistudiocdn.com/react@^19.2.0",
     "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
     "@google/genai": "https://aistudiocdn.com/@google/genai@^1.23.0",
-    "chart.js": "https://aistudiocdn.com/chart.js@^4.5.0"
+    "chart.js": "https://aistudiocdn.com/chart.js@^4.5.0",
+    "qrcode.react": "https://aistudiocdn.com/qrcode.react@^4.2.0"
   }
 }
 </script>
@@ -34,7 +35,7 @@
 <script>
 // ===================================================================================
 //
-//      GOOGLE APPS SCRIPT BACKEND (HYBRID FAST v5.3 - Advanced Error Handling)
+//      GOOGLE APPS SCRIPT BACKEND (HYBRID FAST v5.8 - Report User Fetching)
 //
 // ===================================================================================
 
@@ -50,6 +51,7 @@ var userSheet = ss.getSheetByName("Users");
 var certSheet = ss.getSheetByName("Certificates");
 var titleSheet = ss.getSheetByName("ChucDanh");
 var settingsSheet = ss.getSheetByName("Settings");
+var reportSheet = ss.getSheetByName("Reports");
 var driveFolder = DriveApp.getFolderById(FOLDER_ID);
 
 // ===================================================================================
@@ -110,6 +112,7 @@ function getInitialData() {
 
 function clearInitialCache() {
   CacheService.getScriptCache().remove("dtlt_initial_data_v1");
+  CacheService.getScriptCache().remove("report_users_v1"); // Also clear report users cache
 }
 
 function getSettings() {
@@ -176,8 +179,12 @@ function doPost(e) {
       'askAI': handleAskAI,
       'extractCertificateInfo': handleExtractCertificateInfo,
       'extractFromImageId': handleExtractFromImageId,
-      'checkSpecificGeminiApiKey': (p) => handleCheckSpecificGeminiApiKey(p),
-      'updateComplianceYear': handleUpdateComplianceYear
+      'checkExtractionApiKey': (p) => handleCheckExtractionApiKey(p),
+      'checkAssistantApiKey': handleCheckAssistantApiKey,
+      'updateComplianceYear': handleUpdateComplianceYear,
+      'createReport': handleCreateReport,
+      'getReport': (p) => handleGetReport(p.id),
+      'getUsersForReport': handleGetUsersForReport
     };
 
     if (actionHandlers[action]) {
@@ -506,16 +513,69 @@ function handleUpdateComplianceYear(payload) {
 }
 
 // ===================================================================================
+// 📊 REPORTING
+// ===================================================================================
+function handleGetUsersForReport() {
+  const cache = CacheService.getScriptCache();
+  const key = "report_users_v1";
+  const cached = cache.get(key);
+  if (cached) return JSON.parse(cached);
+
+  Logger.log("🔄 Đọc dữ liệu người dùng cho báo cáo...");
+
+  const users = sheetToObjects(userSheet);
+  const reportUsers = users
+    .filter(u => u.role !== 'admin' && u.role !== 'reporter' && String(u['trạngthái']).trim() !== 'Tạm ngừng')
+    .map(u => ({ id: u.id, name: u.name, department: u.department }));
+
+  const s = JSON.stringify(reportUsers);
+  if (s.length < 100 * 1024) cache.put(key, s, 300); // Cache for 5 minutes
+
+  return reportUsers;
+}
+
+function handleCreateReport(p) {
+  const { title, content } = p;
+  if (!title || !content) {
+    throw new Error("Tiêu đề và nội dung là bắt buộc.");
+  }
+  let reportSheet = ss.getSheetByName("Reports");
+  if (!reportSheet) {
+    reportSheet = ss.insertSheet("Reports");
+    reportSheet.appendRow(['id', 'title', 'content', 'createdAt']);
+  }
+  
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) throw new Error("Hệ thống bận, vui lòng thử lại.");
+
+  try {
+    const id = Utilities.getUuid();
+    const createdAt = new Date().toISOString();
+    reportSheet.appendRow([id, title, content, createdAt]);
+    return { id: id };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function handleGetReport(id) {
+  let reportSheet = ss.getSheetByName("Reports");
+  if (!reportSheet) {
+    throw new Error("Không tìm thấy dữ liệu báo cáo.");
+  }
+  const reports = sheetToObjects(reportSheet);
+  const report = reports.find(r => r.id === id);
+  if (!report) {
+    throw new Error("Không tìm thấy báo cáo với ID đã cho.");
+  }
+  return { title: report.title, content: report.content };
+}
+
+
+// ===================================================================================
 // 🤖 AI + GEMINI / DEEPSEEK
 // ===================================================================================
 
-/**
- * Generic function to make a request to an AI API and handle common errors.
- * @param {string} url The full API endpoint URL.
- * @param {object} options The options for UrlFetchApp.fetch().
- * @param {string} apiName The name of the API for logging ('Google Gemini' or 'DeepSeek').
- * @returns {object} The parsed JSON response.
- */
 function _callApi(url, options, apiName) {
   const res = UrlFetchApp.fetch(url, options);
   const responseCode = res.getResponseCode();
@@ -523,47 +583,31 @@ function _callApi(url, options, apiName) {
 
   if (responseCode >= 400) {
     let errorMessage = `Lỗi không xác định từ ${apiName} API. Mã lỗi: ${responseCode}.`;
-    
     try {
       const errorJson = JSON.parse(content);
       const errorDetails = errorJson.error || {};
       const messageText = errorDetails.message || errorJson.message || '';
 
-      if (apiName === 'DeepSeek' && messageText.toLowerCase().includes('insufficient balance')) {
-        throw new Error('Tài khoản DeepSeek đã hết tín dụng (Insufficient Balance). Vui lòng nạp thêm tiền để API dự phòng có thể hoạt động.');
+      if (apiName === 'Google Gemini' && responseCode === 429) {
+        throw new Error("Hạn ngạch AI của Google trong ngày đã hết.");
       }
-      
-      if (apiName === 'Google Gemini') {
-        if (responseCode === 429) {
-          throw new Error("Hạn ngạch AI của Google trong ngày đã hết. Tính năng trích xuất tự động và trợ lý AI sẽ không hoạt động.");
-        }
-        if (messageText.toLowerCase().includes("api key not valid")) {
-          throw new Error("API key của Google không hợp lệ. Vui lòng kiểm tra lại trong phần cài đặt.");
-        }
+      if (messageText.toLowerCase().includes("api key not valid")) {
+        throw new Error("API key không hợp lệ. Vui lòng kiểm tra lại.");
       }
-
       errorMessage = `Lỗi từ ${apiName} API: ${messageText || content}`;
-
     } catch (e) {
-      // If we already created a friendly error, re-throw it. Otherwise, create a generic one.
-      if (e.message.includes('Insufficient Balance') || e.message.includes('Hạn ngạch') || e.message.includes('API key')) {
-        throw e;
-      }
+      if (e.message.includes("Hạn ngạch") || e.message.includes("API key")) throw e;
       errorMessage = `Lỗi phân tích phản hồi từ ${apiName} API (Mã lỗi: ${responseCode}): ${content}`;
     }
-    
     throw new Error(errorMessage);
   }
-  
   return JSON.parse(content);
 }
 
+function _callGeminiForExtraction(imageBase64, imageType, apiKey) {
+  if (!apiKey) throw new Error("Google API key is missing for the Gemini call.");
 
-function _callGeminiForExtraction(imageBase64, imageType) {
-  const GOOGLE_API_KEY = PropertiesService.getScriptProperties().getProperty('GOOGLE_API_KEY');
-  if (!GOOGLE_API_KEY) throw new Error("Google API key (GOOGLE_API_KEY) chưa được cấu hình.");
-
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GOOGLE_API_KEY;
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + apiKey;
   const promptText = `Bạn là một chuyên gia trích xuất dữ liệu từ hình ảnh chứng chỉ. Nhiệm vụ của bạn là đọc hình ảnh và trả về một đối tượng JSON với các trường sau:
 - "name": Tên của khóa học hoặc chương trình đào tạo.
 - "date": Ngày cấp chứng chỉ, định dạng YYYY-MM-DD.
@@ -587,66 +631,46 @@ function _callGeminiForExtraction(imageBase64, imageType) {
   return raw ? JSON.parse(raw) : {};
 }
 
-function _callDeepseekForExtraction(imageBase64, imageType) {
-  const DEEPSEEK_API_KEY = PropertiesService.getScriptProperties().getProperty('DEEPSEEK_API_KEY');
-  if (!DEEPSEEK_API_KEY) throw new Error("DeepSeek API key (DEEPSEEK_API_KEY) chưa được cấu hình.");
+function callAIForExtraction(imageBase64, imageType) {
+  const primaryKey = PropertiesService.getScriptProperties().getProperty('GOOGLE_API_KEY');
   
-  const url = 'https://api.deepseek.com/v1/chat/completions';
-  const promptText = `Bạn là một chuyên gia trích xuất dữ liệu từ hình ảnh chứng chỉ. Nhiệm vụ của bạn là đọc hình ảnh và trả về một đối tượng JSON với các trường sau:
-- "name": Tên của khóa học hoặc chương trình đào tạo.
-- "date": Ngày cấp chứng chỉ, định dạng YYYY-MM-DD.
-- "credits": Tổng số tiết học hoặc tín chỉ. Chỉ lấy số.
-
-**CÁC QUY TẮC BẮT BUỘC:**
-1.  **KHÔNG LẤY TÊN NGƯỜI:** Tên chứng chỉ TUYỆT ĐỐI KHÔNG PHẢI là tên người.
-2.  **TÌM TỪ KHÓA:** Tên khóa học thường được tìm thấy trong các cụm từ như: "hoàn thành khóa học", "chứng nhận đã hoàn thành chương trình", "đào tạo liên tục về".
-3.  **KHÔNG TÌM THẤY THÌ BỎ TRỐNG:** Nếu không thể tìm thấy thông tin, trả về JSON với các trường có giá trị rỗng (""). **Tuyệt đối không tự bịa ra thông tin.**
-4.  **CHỈ TRẢ VỀ JSON:** Phản hồi của bạn chỉ được chứa đối tượng JSON, không có bất kỳ văn bản nào khác.`;
-
-  const body = {
-    model: "deepseek-chat",
-    response_format: { type: "json_object" },
-    messages: [ { "role": "user", "content": [ { "type": "text", "text": promptText }, { "type": "image_url", "image_url": { "url": "data:" + imageType + ";base64," + imageBase64 } } ] } ]
-  };
-
-  const options = {
-    method: 'post',
-    contentType: 'application/json',
-    payload: JSON.stringify(body),
-    headers: { 'Authorization': 'Bearer ' + DEEPSEEK_API_KEY },
-    muteHttpExceptions: true
-  };
-
-  const data = _callApi(url, options, 'DeepSeek');
-  const raw = data?.choices?.[0]?.message?.content;
-  return raw ? JSON.parse(raw) : {};
-}
-
-function callAIForExtractionWithFallback(imageBase64, imageType) {
-  try {
-    return _callGeminiForExtraction(imageBase64, imageType);
-  } catch (e) {
-    Logger.log("Lỗi với Google API Key (Extraction): " + e.message);
-    const errorMessage = e.message.toLowerCase();
-    const isRecoverableError = errorMessage.includes("quota") || errorMessage.includes("permission denied") || errorMessage.includes("api key") || errorMessage.includes("hạn ngạch");
-
-    if (isRecoverableError) {
-      Logger.log("Thử lại với DeepSeek API Key...");
-      try {
-        return _callDeepseekForExtraction(imageBase64, imageType);
-      } catch (e2) {
-        Logger.log("Lỗi với DeepSeek API Key (dự phòng): " + e2.message);
-        throw e2;
+  if (primaryKey) {
+    try {
+      Logger.log("Đang thử trích xuất bằng API key chính (GOOGLE_API_KEY)...");
+      return _callGeminiForExtraction(imageBase64, imageType, primaryKey);
+    } catch (e) {
+      Logger.log("Lỗi với API key chính: " + e.message);
+      // Chỉ thử lại với key dự phòng nếu lỗi là do hạn ngạch
+      if (e.message.includes("Hạn ngạch")) {
+        Logger.log("Hạn ngạch của key chính đã hết. Chuyển sang key dự phòng...");
+      } else {
+        // Với các lỗi khác (key sai, v.v.), báo lỗi ngay
+        throw e;
       }
-    } else {
-      throw e;
     }
+  } else {
+     Logger.log("API key chính (GOOGLE_API_KEY) không được cấu hình. Chuyển sang key dự phòng.");
+  }
+  
+  // Logic dự phòng
+  const secondaryKey = PropertiesService.getScriptProperties().getProperty('API_KEY');
+  if (!secondaryKey) {
+    throw new Error("Cả hai API key của Google (chính và dự phòng) đều chưa được cấu hình.");
+  }
+
+  Logger.log("Đang thử trích xuất bằng API key dự phòng (API_KEY)...");
+  try {
+    return _callGeminiForExtraction(imageBase64, imageType, secondaryKey);
+  } catch (e) {
+    Logger.log("Lỗi với API key dự phòng: " + e.message);
+    throw new Error("Trích xuất thất bại trên cả hai API key. Lỗi cuối cùng: " + e.message);
   }
 }
 
+
 function handleExtractCertificateInfo(p){
     if (!p.imageBase64 || !p.imageType) throw new Error("Thiếu dữ liệu ảnh.");
-    return callAIForExtractionWithFallback(p.imageBase64, p.imageType);
+    return callAIForExtraction(p.imageBase64, p.imageType);
 }
 
 function handleExtractFromImageId(p) {
@@ -661,7 +685,7 @@ function handleExtractFromImageId(p) {
     if (!imageType || !imageType.startsWith('image/')) throw new Error("Tệp không phải là định dạng hình ảnh được hỗ trợ.");
     
     const base64Data = Utilities.base64Encode(imageBytes);
-    return callAIForExtractionWithFallback(base64Data, imageType);
+    return callAIForExtraction(base64Data, imageType);
   } catch (e) {
     Logger.log("Lỗi khi lấy ảnh từ Drive ID (" + p.imageId + "): " + e.toString());
     const msg = e.message ? e.message.toLowerCase() : '';
@@ -671,50 +695,69 @@ function handleExtractFromImageId(p) {
   }
 }
 
-function handleCheckSpecificGeminiApiKey(payload) {
+function handleCheckExtractionApiKey(payload) {
   const { keyName } = payload;
-  
+  let apiKey, keyLabel, propName;
+
   if (keyName === 'primary') {
-    const apiKey = PropertiesService.getScriptProperties().getProperty('GOOGLE_API_KEY');
-    const keyLabel = 'Google AI API (Chính)';
-    if (!apiKey) throw new Error(keyLabel + " chưa được cấu hình trên máy chủ.");
-    
-    const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + apiKey;
-    const body = { contents: [{ parts: [{ text: "hi" }] }] };
-    const options = { method: 'post', contentType: 'application/json', payload: JSON.stringify(body), muteHttpExceptions: true };
-    
-    _callApi(url, options, 'Google Gemini'); // This will throw an error on failure
-    return { message: "Kết nối thành công. " + keyLabel + " đang hoạt động và còn hạn ngạch." };
-
+    propName = 'GOOGLE_API_KEY';
+    keyLabel = 'Google AI API (Chính)';
   } else if (keyName === 'secondary') {
-    const apiKey = PropertiesService.getScriptProperties().getProperty('DEEPSEEK_API_KEY');
-    const keyLabel = 'DeepSeek AI API (Dự phòng)';
-    if (!apiKey) throw new Error(keyLabel + " chưa được cấu hình trên máy chủ.");
-
-    const url = 'https://api.deepseek.com/v1/chat/completions';
-    const body = { model: "deepseek-chat", messages: [{ "role": "user", "content": "hi" }], max_tokens: 5 };
-    const options = { method: 'post', contentType: 'application/json', payload: JSON.stringify(body), headers: { 'Authorization': 'Bearer ' + apiKey }, muteHttpExceptions: true };
-
-    _callApi(url, options, 'DeepSeek'); // This will throw an error on failure
-    return { message: "Kết nối thành công. " + keyLabel + " đang hoạt động và còn hạn ngạch." };
+    propName = 'API_KEY';
+    keyLabel = 'Google AI API (Dự phòng)';
   } else {
-    throw new Error("Tên key không hợp lệ. Phải là 'primary' hoặc 'secondary'.");
+    throw new Error("Tên key không hợp lệ.");
   }
+
+  apiKey = PropertiesService.getScriptProperties().getProperty(propName);
+  if (!apiKey) throw new Error(keyLabel + " chưa được cấu hình trên máy chủ.");
+    
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + apiKey;
+  const body = { contents: [{ parts: [{ text: "hi" }] }] };
+  const options = { method: 'post', contentType: 'application/json', payload: JSON.stringify(body), muteHttpExceptions: true };
+    
+  _callApi(url, options, 'Google Gemini'); // This will throw an error on failure
+  return { message: "Kết nối thành công. " + keyLabel + " đang hoạt động và còn hạn ngạch." };
 }
 
-function handleAskAI(p){
-  // For simplicity, AI assistant currently only uses the primary (Google) API.
-  // Fallback for chat can be added later if needed, following the extraction pattern.
-  const GOOGLE_API_KEY = PropertiesService.getScriptProperties().getProperty('GOOGLE_API_KEY');
-  if (!GOOGLE_API_KEY) throw new Error("Tính năng Trợ lý AI yêu cầu Google API Key (GOOGLE_API_KEY) phải được cấu hình.");
+function handleCheckAssistantApiKey() {
+  const apiKey = PropertiesService.getScriptProperties().getProperty('DEEPSEEK_API_KEY');
+  const keyLabel = 'DeepSeek AI (Trợ lý)';
+  if (!apiKey) throw new Error(keyLabel + " chưa được cấu hình trên máy chủ.");
 
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GOOGLE_API_KEY;
-  const context='Bạn là trợ lý AI phân tích dữ liệu đào tạo nhân sự.\nDữ liệu gồm '+p.users.length+' người và '+p.certificates.length+' chứng chỉ.\nTrả lời ngắn gọn, tiếng Việt.';
-  const body={contents:[{role:"user",parts:[{text:p.userMessage}]}],systemInstruction:{parts:[{text:context}]},generationConfig:{temperature:0.2,responseMimeType:"text/plain"}};
-  const options = { method: 'post', contentType: 'application/json', payload: JSON.stringify(body), muteHttpExceptions: true };
-  
-  const data = _callApi(url, options, 'Google Gemini');
-  const ans = data?.candidates?.[0]?.content?.parts?.[0]?.text || "Không có phản hồi.";
+  const url = 'https://api.deepseek.com/v1/chat/completions';
+  const body = { model: "deepseek-chat", messages: [{ "role": "user", "content": "hi" }], max_tokens: 5 };
+  const options = { method: 'post', contentType: 'application/json', payload: JSON.stringify(body), headers: { 'Authorization': 'Bearer ' + apiKey }, muteHttpExceptions: true };
+
+  _callApi(url, options, 'DeepSeek'); // This will throw an error on failure
+  return { message: "Kết nối thành công. " + keyLabel + " đang hoạt động." };
+}
+
+function handleAskAI(p) {
+  const DEEPSEEK_API_KEY = PropertiesService.getScriptProperties().getProperty('DEEPSEEK_API_KEY');
+  if (!DEEPSEEK_API_KEY) throw new Error("Tính năng Trợ lý AI yêu cầu DeepSeek API Key (DEEPSEEK_API_KEY) phải được cấu hình.");
+
+  const url = 'https://api.deepseek.com/v1/chat/completions';
+  const context = 'Bạn là trợ lý AI phân tích dữ liệu đào tạo nhân sự.\nDữ liệu được cung cấp gồm ' + p.users.length + ' người dùng và ' + p.certificates.length + ' chứng chỉ.\nHãy trả lời câu hỏi của người dùng một cách ngắn gọn, súc tích bằng tiếng Việt dựa trên dữ liệu này.';
+
+  const body = {
+    model: "deepseek-chat",
+    messages: [
+      { "role": "system", "content": context },
+      { "role": "user", "content": p.userMessage }
+    ]
+  };
+
+  const options = {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(body),
+    headers: { 'Authorization': 'Bearer ' + DEEPSEEK_API_KEY },
+    muteHttpExceptions: true
+  };
+
+  const data = _callApi(url, options, 'DeepSeek');
+  const ans = data?.choices?.[0]?.message?.content || "Xin lỗi, tôi không thể tạo phản hồi vào lúc này.";
   return ans;
 }
 </script>

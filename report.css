@@ -1,0 +1,245 @@
+/* ==================================
+   STYLES FOR REPORT CREATION & VIEWING
+   ================================== */
+
+/* Main Container for Report Pages */
+.report-page-container {
+    max-width: 900px;
+    margin: 30px auto;
+    padding: 30px;
+    background: var(--card-background);
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow);
+    animation: fadeIn 0.5s ease-out;
+}
+
+.report-page-container h2,
+.report-page-container h1 {
+    color: var(--primary-color);
+    margin-bottom: 24px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid var(--border-color);
+}
+
+.report-page-container .form-group {
+    margin-bottom: 20px;
+}
+
+.report-page-container label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+}
+
+.report-page-container input[type="text"] {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 16px;
+}
+.report-page-container input[type="text"]:focus {
+     outline: none;
+    border-color: var(--secondary-color);
+    box-shadow: 0 0 0 3px rgba(10, 147, 150, 0.15);
+}
+
+/* Report Creation Filters */
+.report-filters {
+    margin: 24px 0;
+    padding: 16px;
+    background-color: var(--background-color);
+    border-radius: var(--border-radius);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.report-filters label {
+    margin-bottom: 0;
+}
+
+.report-filters select {
+    padding: 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    font-size: 16px;
+    min-width: 200px;
+}
+
+/* User Selection Table */
+.user-selection-table-container {
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+}
+
+.user-selection-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.user-selection-table th,
+.user-selection-table td {
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.user-selection-table th {
+    background-color: #f8f9fa;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.user-selection-table tbody tr:hover {
+    background-color: #f1f3f5;
+}
+
+.user-selection-table input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+/* Report Creation Actions Bar */
+.report-creation-actions {
+    margin-top: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-color);
+}
+.report-creation-actions span {
+    font-weight: 500;
+    color: var(--primary-color);
+}
+
+/* Share Link & QR Code Section */
+.share-link-container {
+    margin-top: 20px;
+    padding: 20px;
+    border-top: 2px solid var(--success-color);
+    background-color: #f0fff4;
+    border-radius: var(--border-radius);
+}
+.share-link-container h4 {
+    color: var(--success-color);
+    margin-bottom: 8px;
+}
+
+/* Report Viewer Table */
+.report-viewer-table-container {
+    margin-top: 24px;
+}
+
+.report-viewer-table {
+    width: 100%;
+    border-collapse: collapse;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+}
+
+.report-viewer-table th,
+.report-viewer-table td {
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.report-viewer-table th {
+    background-color: var(--primary-color);
+    color: white;
+}
+.report-viewer-table tbody tr:nth-child(even) {
+    background-color: #f8f9fa;
+}
+
+.report-viewer-table .btn-view {
+    padding: 6px 12px;
+    font-size: 14px;
+    background-color: var(--secondary-color);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+.report-viewer-table .btn-view:hover {
+    background-color: #087a7d;
+}
+
+/* Responsive Styles */
+@media (max-width: 768px) {
+    .report-page-container {
+        padding: 15px;
+        margin: 15px;
+    }
+    .report-filters {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .user-selection-table thead, .report-viewer-table thead {
+        display: none;
+    }
+
+    .user-selection-table, .user-selection-table tbody, .user-selection-table tr, .user-selection-table td,
+    .report-viewer-table, .report-viewer-table tbody, .report-viewer-table tr, .report-viewer-table td {
+        display: block;
+        width: 100%;
+    }
+
+    .user-selection-table tr, .report-viewer-table tr {
+        margin-bottom: 15px;
+        border: 1px solid var(--border-color);
+        border-radius: var(--border-radius);
+        padding: 10px;
+    }
+    
+    .user-selection-table td, .report-viewer-table td {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        text-align: right;
+        padding: 10px 0;
+        border-bottom: 1px solid #eee;
+    }
+    .user-selection-table td:last-child, .report-viewer-table td:last-child {
+        border-bottom: none;
+    }
+
+    .user-selection-table td:before, .report-viewer-table td:before {
+        content: attr(data-label);
+        font-weight: bold;
+        text-align: left;
+    }
+
+    /* Adjust specific columns */
+    .user-selection-table td:nth-of-type(1) {
+       justify-content: flex-end; /* Align checkbox to the right */
+    }
+     .user-selection-table td:nth-of-type(1):before {
+       content: "Chọn";
+    }
+     .user-selection-table td:nth-of-type(2):before {
+       content: "STT";
+    }
+    .user-selection-table td:nth-of-type(3):before {
+       content: "Họ và Tên";
+    }
+    .user-selection-table td:nth-of-type(4):before {
+       content: "Khoa/Phòng";
+    }
+
+    .report-viewer-table td:nth-of-type(1):before { content: "STT"; }
+    .report-viewer-table td:nth-of-type(2):before { content: "Họ và Tên"; }
+    .report-viewer-table td:nth-of-type(3):before { content: "Khoa/Phòng"; }
+    .report-viewer-table td:nth-of-type(4):before { content: "Hành động"; }
+
+}

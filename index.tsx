@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Chart, registerables, ChartType } from 'chart.js';
+import { Report, ReportViewer } from "./Report";
+import "./report.css";
 Chart.register(...registerables);
 
 // For Excel export
@@ -2669,8 +2671,9 @@ const AdminTab = ({
 
 const ApiStatusTab = () => {
     const [sheetsStatus, setSheetsStatus] = useState({ status: 'idle', message: 'Chưa kiểm tra' });
-    const [googleApiStatus, setGoogleApiStatus] = useState({ status: 'idle', message: 'Chưa kiểm tra' });
-    const [deepseekApiStatus, setDeepseekApiStatus] = useState({ status: 'idle', message: 'Chưa kiểm tra' });
+    const [primaryApiStatus, setPrimaryApiStatus] = useState({ status: 'idle', message: 'Chưa kiểm tra' });
+    const [secondaryApiStatus, setSecondaryApiStatus] = useState({ status: 'idle', message: 'Chưa kiểm tra' });
+    const [assistantApiStatus, setAssistantApiStatus] = useState({ status: 'idle', message: 'Chưa kiểm tra' });
 
     const checkSheets = async () => {
         setSheetsStatus({ status: 'loading', message: 'Đang kiểm tra...' });
@@ -2682,23 +2685,33 @@ const ApiStatusTab = () => {
         }
     };
 
-    const checkGoogleApi = async () => {
-        setGoogleApiStatus({ status: 'loading', message: 'Đang kiểm tra...' });
+    const checkPrimaryGoogleApi = async () => {
+        setPrimaryApiStatus({ status: 'loading', message: 'Đang kiểm tra...' });
         try {
-            const response = await api.request('POST', 'checkSpecificGeminiApiKey', { keyName: 'primary' });
-            setGoogleApiStatus({ status: 'success', message: response.message || 'Kết nối thành công.' });
+            const response = await api.request('POST', 'checkExtractionApiKey', { keyName: 'primary' });
+            setPrimaryApiStatus({ status: 'success', message: response.message || 'Kết nối thành công.' });
         } catch (error: any) {
-            setGoogleApiStatus({ status: 'error', message: `Lỗi: ${error.message}` });
+            setPrimaryApiStatus({ status: 'error', message: `Lỗi: ${error.message}` });
         }
     };
 
-    const checkDeepseekApi = async () => {
-        setDeepseekApiStatus({ status: 'loading', message: 'Đang kiểm tra...' });
+    const checkSecondaryGoogleApi = async () => {
+        setSecondaryApiStatus({ status: 'loading', message: 'Đang kiểm tra...' });
         try {
-            const response = await api.request('POST', 'checkSpecificGeminiApiKey', { keyName: 'secondary' });
-            setDeepseekApiStatus({ status: 'success', message: response.message || 'Kết nối thành công.' });
+            const response = await api.request('POST', 'checkExtractionApiKey', { keyName: 'secondary' });
+            setSecondaryApiStatus({ status: 'success', message: response.message || 'Kết nối thành công.' });
         } catch (error: any) {
-            setDeepseekApiStatus({ status: 'error', message: `Lỗi: ${error.message}` });
+            setSecondaryApiStatus({ status: 'error', message: `Lỗi: ${error.message}` });
+        }
+    };
+
+    const checkAssistantApi = async () => {
+        setAssistantApiStatus({ status: 'loading', message: 'Đang kiểm tra...' });
+        try {
+            const response = await api.request('POST', 'checkAssistantApiKey', {});
+            setAssistantApiStatus({ status: 'success', message: response.message || 'Kết nối thành công.' });
+        } catch (error: any) {
+            setAssistantApiStatus({ status: 'error', message: `Lỗi: ${error.message}` });
         }
     };
 
@@ -2718,29 +2731,42 @@ const ApiStatusTab = () => {
                 </button>
             </div>
             <div className="api-status-card">
-                <h3>Google AI API (Chính)</h3>
-                <p>Kiểm tra Google API Key. Đây là API được sử dụng mặc định cho các tính năng AI. Nếu hạn ngạch của API này hết, hệ thống sẽ tự động chuyển sang API dự phòng.</p>
+                <h3>Google AI API (Trích xuất - Chính)</h3>
+                <p>Kiểm tra API Key chính của Google (`GOOGLE_API_KEY`), được sử dụng mặc định cho tính năng trích xuất thông tin từ hình ảnh.</p>
                  <div className="status-message-container">
-                    <div className={`status-message ${googleApiStatus.status}`}>
-                       <strong>Trạng thái:</strong> {googleApiStatus.message}
+                    <div className={`status-message ${primaryApiStatus.status}`}>
+                       <strong>Trạng thái:</strong> {primaryApiStatus.message}
                     </div>
                 </div>
-                <button className="btn" onClick={checkGoogleApi} disabled={googleApiStatus.status === 'loading'}>
+                <button className="btn" onClick={checkPrimaryGoogleApi} disabled={primaryApiStatus.status === 'loading'}>
                     <span className="material-icons">sync</span>
-                    {googleApiStatus.status === 'loading' ? 'Đang kiểm tra...' : 'Kiểm tra lại'}
+                    {primaryApiStatus.status === 'loading' ? 'Đang kiểm tra...' : 'Kiểm tra lại'}
                 </button>
             </div>
             <div className="api-status-card">
-                <h3>DeepSeek AI API (Dự phòng)</h3>
-                <p>Kiểm tra DeepSeek API Key. API này sẽ được sử dụng khi API chính gặp lỗi về hạn ngạch, giúp duy trì hoạt động của các tính năng AI.</p>
+                <h3>Google AI API (Trích xuất - Dự phòng)</h3>
+                <p>Kiểm tra API Key dự phòng của Google (`API_KEY`). Key này sẽ được sử dụng khi key chính gặp lỗi về hạn ngạch, giúp duy trì hoạt động của tính năng trích xuất.</p>
                  <div className="status-message-container">
-                    <div className={`status-message ${deepseekApiStatus.status}`}>
-                       <strong>Trạng thái:</strong> {deepseekApiStatus.message}
+                    <div className={`status-message ${secondaryApiStatus.status}`}>
+                       <strong>Trạng thái:</strong> {secondaryApiStatus.message}
                     </div>
                 </div>
-                <button className="btn" onClick={checkDeepseekApi} disabled={deepseekApiStatus.status === 'loading'}>
+                <button className="btn" onClick={checkSecondaryGoogleApi} disabled={secondaryApiStatus.status === 'loading'}>
                     <span className="material-icons">sync</span>
-                    {deepseekApiStatus.status === 'loading' ? 'Đang kiểm tra...' : 'Kiểm tra lại'}
+                    {secondaryApiStatus.status === 'loading' ? 'Đang kiểm tra...' : 'Kiểm tra lại'}
+                </button>
+            </div>
+             <div className="api-status-card">
+                <h3>DeepSeek AI API (Trợ lý AI)</h3>
+                <p>Kiểm tra API Key của DeepSeek (`DEEPSEEK_API_KEY`), được sử dụng cho tính năng Trợ lý AI trong tab trò chuyện.</p>
+                 <div className="status-message-container">
+                    <div className={`status-message ${assistantApiStatus.status}`}>
+                       <strong>Trạng thái:</strong> {assistantApiStatus.message}
+                    </div>
+                </div>
+                <button className="btn" onClick={checkAssistantApi} disabled={assistantApiStatus.status === 'loading'}>
+                    <span className="material-icons">sync</span>
+                    {assistantApiStatus.status === 'loading' ? 'Đang kiểm tra...' : 'Kiểm tra lại'}
                 </button>
             </div>
         </div>
@@ -2847,6 +2873,8 @@ interface MainAppProps {
     users: User[];
     certificates: Certificate[];
     titles: Title[];
+    activeTab: string;
+    onNavigate: (view: string) => void;
     onLogout: () => void;
     onAddCertificate: (cert: NewCertificatePayload) => Promise<void>;
     onUpdateCertificate: (cert: Certificate, newImageFile?: File, newImageOrientation?: number) => Promise<void>;
@@ -2863,26 +2891,15 @@ interface MainAppProps {
 }
 
 const MainApp = (props: MainAppProps) => {
-  const { user, users, certificates, titles, onLogout, onAddCertificate, onUpdateCertificate, onUpdateCertificateOrientation, onDeleteCertificate, onAddUser, onUpdateUser, onDeleteUser, onChangePassword, googleSheetUrl, googleFolderUrl, complianceStartYear, onUpdateComplianceYear } = props;
+  const { user, users, certificates, titles, activeTab, onNavigate, onLogout, onAddCertificate, onUpdateCertificate, onUpdateCertificateOrientation, onDeleteCertificate, onAddUser, onUpdateUser, onDeleteUser, onChangePassword, googleSheetUrl, googleFolderUrl, complianceStartYear, onUpdateComplianceYear } = props;
   const mainContentRef = useRef<HTMLElement>(null);
-  const [activeTab, setActiveTab] = useState('personal_info');
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [isEditUserModalOpen, setIsEditUserModalOpen] = useState(false);
 
   const allDepartments = useMemo(() => [...new Set(users.map(u => u.department).filter(Boolean))].sort(), [users]);
   
-  useEffect(() => {
-      // Set default tab based on role
-      if (user.role === 'reporter') {
-          setActiveTab('reporting');
-      } else {
-          setActiveTab('personal_info');
-      }
-  }, [user.id, user.role]);
-
-
   const handleTabClick = (tabId: string) => {
-    setActiveTab(tabId);
+    onNavigate(tabId);
     setTimeout(() => {
         if (mainContentRef.current) {
             mainContentRef.current.scrollTop = 0;
@@ -3006,8 +3023,16 @@ const ProcessingOverlay = () => (
     </div>
 );
 
+const Navigation = () => (
+    <nav className="main-nav">
+        <a href="?view=personal_info">Trang chính</a>
+        <a href="?view=report">Tạo Báo cáo</a>
+    </nav>
+);
+
 
 const App = () => {
+  const [searchParams, setSearchParams] = useState(new URLSearchParams(window.location.search));
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loginError, setLoginError] = useState('');
   
@@ -3021,6 +3046,27 @@ const App = () => {
   const [googleFolderUrl, setGoogleFolderUrl] = useState('');
   const [complianceStartYear, setComplianceStartYear] = useState(new Date().getFullYear());
   
+  useEffect(() => {
+    const handleUrlChange = () => {
+        setSearchParams(new URLSearchParams(window.location.search));
+    };
+    window.addEventListener('popstate', handleUrlChange);
+    return () => window.removeEventListener('popstate', handleUrlChange);
+  }, []);
+
+  const navigate = (view: string, params?: Record<string, string>) => {
+      const newParams = new URLSearchParams();
+      newParams.set('view', view);
+      if (params) {
+          for (const key in params) {
+              newParams.set(key, params[key]);
+          }
+      }
+      const newUrl = `${window.location.pathname}?${newParams.toString()}`;
+      window.history.pushState({}, '', newUrl);
+      setSearchParams(newParams);
+  };
+
   // Helper to find a property in an object regardless of its case
   const findProp = (obj: any, propNames: string[]) => {
       if (!obj) return undefined;
@@ -3265,6 +3311,9 @@ const App = () => {
             sessionStorage.setItem('currentUser', JSON.stringify(matchedUser));
             if (!matchedUser.passwordChangedAt) {
                 setIsForcePasswordChange(true);
+            } else {
+                const defaultView = matchedUser.role === 'reporter' ? 'reporting' : 'personal_info';
+                navigate(defaultView);
             }
         } else {
              setLoginError('Đăng nhập thành công nhưng không thể tải dữ liệu người dùng.');
@@ -3280,6 +3329,7 @@ const App = () => {
   const handleLogout = useCallback(() => {
     setCurrentUser(null);
     sessionStorage.removeItem('currentUser');
+    navigate('login');
   }, []);
 
   const handleAddCertificate = useCallback(async (newCert: NewCertificatePayload) => {
@@ -3468,6 +3518,17 @@ const App = () => {
         </div>
     );
   }
+  
+  const view = searchParams.get('view');
+  const id = searchParams.get('id');
+
+  if (view === 'report-viewer' && id) {
+    return <ReportViewer id={id} />;
+  }
+
+  if (view === 'report') {
+    return <Report />;
+  }
 
   const handleForcedPasswordSave = async (userId: number, oldPass: string, newPass: string) => {
       await handleChangePassword(userId, oldPass, newPass);
@@ -3477,12 +3538,17 @@ const App = () => {
           setCurrentUser(updatedUser);
           sessionStorage.setItem('currentUser', JSON.stringify(updatedUser));
           setIsForcePasswordChange(false);
+          const defaultView = updatedUser.role === 'reporter' ? 'reporting' : 'personal_info';
+          navigate(defaultView);
       }
   };
 
+  const defaultViewForCurrentUser = currentUser ? (currentUser.role === 'reporter' ? 'reporting' : 'personal_info') : 'login';
+  const activeView = view || defaultViewForCurrentUser;
 
   return (
     <>
+      <Navigation />
       <div className={`app-container ${!currentUser ? 'login-view' : ''}`}>
         {isProcessing && <ProcessingOverlay />}
         {currentUser && isForcePasswordChange ? (
@@ -3500,6 +3566,8 @@ const App = () => {
               users={users}
               certificates={certificates}
               titles={titles}
+              activeTab={activeView}
+              onNavigate={navigate}
               onLogout={handleLogout}
               onAddCertificate={handleAddCertificate}
               onUpdateCertificate={handleUpdateCertificate}
