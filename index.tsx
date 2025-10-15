@@ -98,29 +98,35 @@ const formatDateForDisplay = (dateString: string | null | undefined): string => 
 
 // !!! IMPORTANT: PASTE YOUR DEPLOYED WEB APP URL HERE
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbzSh3oyhzNh-NGm2lGxoP0CqMJjpsV9FZYlt443T0XDf91GsdUfSAU68P-OlEuJo6xtJw/exec'; 
+const QR_BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwyfHIuAX5qMo-S6ZH6C2n93RDt2Z4Ik7fZJNR5UPg-kbeUpa1hAB7mamf3eXReuXDF/exec'; // !!! IMPORTANT: PASTE YOUR QR TOKEN GENERATOR SCRIPT URL HERE
 
 const api = {
     // Helper function to handle fetch requests
-    request: async (method: 'GET' | 'POST', action?: string, payload?: any) => {
-        if (!BACKEND_URL) {
-            alert('Lỗi cấu hình: Vui lòng dán URL của Google Apps Script Web App vào biến BACKEND_URL trong file index.tsx.');
+    request: async (method: 'GET' | 'POST', action?: string, payload?: any, baseUrl = BACKEND_URL) => {
+        if (!baseUrl) {
+            const alertMessage = baseUrl === BACKEND_URL 
+                ? 'Lỗi cấu hình: Vui lòng dán URL của Google Apps Script Web App vào biến BACKEND_URL trong file index.tsx.'
+                : 'Lỗi cấu hình: Vui lòng dán URL của Google Apps Script QR Code vào biến QR_BACKEND_URL trong file index.tsx.';
+            alert(alertMessage);
             throw new Error("Backend URL not configured.");
         }
-
+        
+        const isQrRequest = baseUrl === QR_BACKEND_URL;
+        let url = baseUrl;
         const options: RequestInit = {
             method,
-            headers: {
-                'Content-Type': 'text/plain;charset=utf-8', // Required for Apps Script
-            },
             redirect: 'follow',
         };
 
         if (method === 'POST') {
-            options.body = JSON.stringify({ action, payload });
+             options.headers = { 'Content-Type': 'text/plain;charset=utf-8' }; // Required for Apps Script POST
+             options.body = JSON.stringify({ action, payload });
+        } else if (method === 'GET' && !isQrRequest) {
+            url += '?action=fetchInitialData';
         }
         
         try {
-            const response = await fetch(BACKEND_URL + (method === 'GET' ? '?action=fetchInitialData' : ''), options);
+            const response = await fetch(url, options);
             const result = await response.json();
 
             if (!result.success) {
@@ -128,12 +134,18 @@ const api = {
                 throw new Error(result.message || 'An unknown API error occurred.');
             }
             
-            return result.data;
+            return result; // Return the whole result for QR API, just data for main API
 
         } catch (error) {
             console.error(`API request failed for action: ${action}`, error);
             throw error;
         }
+    },
+    
+     // Helper specifically for main API to maintain original structure
+    mainApiRequest: async (method: 'GET' | 'POST', action?: string, payload?: any) => {
+        const result = await api.request(method, action, payload, BACKEND_URL);
+        return result.data;
     },
 
     // Helper to convert a file to a base64 string
@@ -148,17 +160,27 @@ const api = {
 
     // FETCH initial (lightweight) data
     fetchInitialData: async (): Promise<{ users: User[], titles: Title[], googleSheetUrl: string, googleFolderUrl: string, complianceStartYear: number }> => {
-        return api.request('GET', 'fetchInitialData');
+        return api.mainApiRequest('GET', 'fetchInitialData');
     },
 
     // FETCH heavy data (certificates) separately
     fetchCertificates: async (): Promise<Certificate[]> => {
-        return api.request('POST', 'fetchCertificates');
+        return api.mainApiRequest('POST', 'fetchCertificates');
+    },
+    
+    // QR Code Link Generation and Verification
+    createShareableLink: async (userId: number): Promise<{ success: boolean; url: string }> => {
+        const url = `${QR_BACKEND_URL}?action=createLink&id=${userId}`;
+        return api.request('GET', 'createLink', undefined, url);
+    },
+    verifyShareToken: async (token: string): Promise<{ success: boolean; id?: number; message: string }> => {
+        const url = `${QR_BACKEND_URL}?action=verify&token=${token}`;
+        return api.request('GET', 'verify', undefined, url);
     },
 
     // AUTHENTICATION
     login: async (username: string, password: string): Promise<{ loggedInUser: User, users: User[], titles: Title[], googleSheetUrl: string, googleFolderUrl: string, complianceStartYear: number }> => {
-        return api.request('POST', 'login', { username, password });
+        return api.mainApiRequest('POST', 'login', { username, password });
     },
     
     changePassword: async (userId: number, oldPassword: string, newPassword: string): Promise<{success: boolean, message: string}> => {
@@ -168,7 +190,7 @@ const api = {
             newPassword,
             passwordChangedAt: new Date().toISOString()
         };
-        return api.request('POST', 'changePassword', payload);
+        return api.mainApiRequest('POST', 'changePassword', payload);
     },
 
     // CERTIFICATES
@@ -197,33 +219,33 @@ const api = {
             imageBase64,
             orientation: certData.orientation,
         };
-        return api.request('POST', 'addCertificate', payload);
+        return api.mainApiRequest('POST', 'addCertificate', payload);
     },
     updateCertificate: async (payload: any): Promise<Certificate> => {
         const payloadWithTimestamp = { ...payload, updatedAt: new Date().toISOString() };
-        return api.request('POST', 'updateCertificate', payloadWithTimestamp);
+        return api.mainApiRequest('POST', 'updateCertificate', payloadWithTimestamp);
     },
     updateCertificateOrientation: async (id: number, orientation: number): Promise<Certificate> => {
-        return api.request('POST', 'updateCertificateOrientation', { id, orientation });
+        return api.mainApiRequest('POST', 'updateCertificateOrientation', { id, orientation });
     },
     deleteCertificate: async (id: number, modifiedByUserId: number): Promise<number> => {
-        return api.request('POST', 'deleteCertificate', { id, modifiedByUserId });
+        return api.mainApiRequest('POST', 'deleteCertificate', { id, modifiedByUserId });
     },
     
     // USERS
     addUser: async (newUser: NewUser): Promise<User> => {
-        return api.request('POST', 'addUser', newUser);
+        return api.mainApiRequest('POST', 'addUser', newUser);
     },
     updateUser: async (updatedUser: User): Promise<User> => {
-        return api.request('POST', 'updateUser', updatedUser);
+        return api.mainApiRequest('POST', 'updateUser', updatedUser);
     },
     deleteUser: async (userId: number): Promise<number> => {
-        return api.request('POST', 'deleteUser', { userId });
+        return api.mainApiRequest('POST', 'deleteUser', { userId });
     },
 
     // SETTINGS
     updateComplianceYear: async (year: number): Promise<{ newYear: number }> => {
-        return api.request('POST', 'updateComplianceYear', { year });
+        return api.mainApiRequest('POST', 'updateComplianceYear', { year });
     },
 };
 // ===================================================================================
@@ -453,7 +475,7 @@ const EditCertificateModal = ({ certificate, onSave, onCancel }: { certificate: 
             reader.readAsDataURL(newImageFile);
             reader.onloadend = async () => {
                 const base64Data = (reader.result as string).split(',')[1];
-                const result = await api.request('POST', 'extractCertificateInfo', {
+                const result = await api.mainApiRequest('POST', 'extractCertificateInfo', {
                     imageBase64: base64Data,
                     imageType: newImageFile.type,
                 });
@@ -475,7 +497,7 @@ const EditCertificateModal = ({ certificate, onSave, onCancel }: { certificate: 
         setIsExtractingCurrent(true);
         setExtractionStatus('Đang phân tích ảnh hiện tại...');
         try {
-            const result = await api.request('POST', 'extractFromImageId', {
+            const result = await api.mainApiRequest('POST', 'extractFromImageId', {
                 imageId: certificate.imageId,
             });
             applyExtractionResult(result);
@@ -1039,7 +1061,7 @@ const DataEntryTab = ({ onAddCertificate }: { onAddCertificate: (cert: NewCertif
         try {
             const base64Data = await blobToBase64(file);
             
-            const result = await api.request('POST', 'extractCertificateInfo', {
+            const result = await api.mainApiRequest('POST', 'extractCertificateInfo', {
                 imageBase64: base64Data,
                 imageType: file.type,
             });
@@ -1325,7 +1347,7 @@ const AIAssistantTab = ({ certificates, users }: { certificates: Certificate[], 
 
         try {
             // Securely call the backend which then calls the Gemini API
-            const aiResponseText = await api.request('POST', 'askAI', {
+            const aiResponseText = await api.mainApiRequest('POST', 'askAI', {
                 userMessage: userMessage,
                 users: users,
                 certificates: certificates
@@ -2678,7 +2700,7 @@ const ApiStatusTab = () => {
     const checkSheets = async () => {
         setSheetsStatus({ status: 'loading', message: 'Đang kiểm tra...' });
         try {
-            await api.request('GET', 'fetchInitialData');
+            await api.mainApiRequest('GET', 'fetchInitialData');
             setSheetsStatus({ status: 'success', message: 'Kết nối tới Google Sheets thành công. Dữ liệu có thể được đọc.' });
         } catch (error: any) {
             setSheetsStatus({ status: 'error', message: `Lỗi kết nối Google Sheets: ${error.message}` });
@@ -2688,7 +2710,7 @@ const ApiStatusTab = () => {
     const checkPrimaryGoogleApi = async () => {
         setPrimaryApiStatus({ status: 'loading', message: 'Đang kiểm tra...' });
         try {
-            const response = await api.request('POST', 'checkExtractionApiKey', { keyName: 'primary' });
+            const response = await api.mainApiRequest('POST', 'checkExtractionApiKey', { keyName: 'primary' });
             setPrimaryApiStatus({ status: 'success', message: response.message || 'Kết nối thành công.' });
         } catch (error: any) {
             setPrimaryApiStatus({ status: 'error', message: `Lỗi: ${error.message}` });
@@ -2698,7 +2720,7 @@ const ApiStatusTab = () => {
     const checkSecondaryGoogleApi = async () => {
         setSecondaryApiStatus({ status: 'loading', message: 'Đang kiểm tra...' });
         try {
-            const response = await api.request('POST', 'checkExtractionApiKey', { keyName: 'secondary' });
+            const response = await api.mainApiRequest('POST', 'checkExtractionApiKey', { keyName: 'secondary' });
             setSecondaryApiStatus({ status: 'success', message: response.message || 'Kết nối thành công.' });
         } catch (error: any) {
             setSecondaryApiStatus({ status: 'error', message: `Lỗi: ${error.message}` });
@@ -2708,7 +2730,7 @@ const ApiStatusTab = () => {
     const checkAssistantApi = async () => {
         setAssistantApiStatus({ status: 'loading', message: 'Đang kiểm tra...' });
         try {
-            const response = await api.request('POST', 'checkAssistantApiKey', {});
+            const response = await api.mainApiRequest('POST', 'checkAssistantApiKey', {});
             setAssistantApiStatus({ status: 'success', message: response.message || 'Kết nối thành công.' });
         } catch (error: any) {
             setAssistantApiStatus({ status: 'error', message: `Lỗi: ${error.message}` });
@@ -3045,6 +3067,7 @@ const App = () => {
   const [googleSheetUrl, setGoogleSheetUrl] = useState('');
   const [googleFolderUrl, setGoogleFolderUrl] = useState('');
   const [complianceStartYear, setComplianceStartYear] = useState(new Date().getFullYear());
+  const [verificationStatus, setVerificationStatus] = useState<{ status: 'idle' | 'verifying' | 'error', message: string }>({ status: 'idle', message: '' });
   
   useEffect(() => {
     const handleUrlChange = () => {
@@ -3053,7 +3076,8 @@ const App = () => {
     window.addEventListener('popstate', handleUrlChange);
     
     // Handle initial URL state
-    const currentView = new URLSearchParams(window.location.search).get('view');
+    const currentParams = new URLSearchParams(window.location.search);
+    const currentView = currentParams.get('view');
     if (currentView && (currentView.startsWith('report-') || currentView.startsWith('report_'))) {
         const newParams = new URLSearchParams(window.location.search);
         newParams.set('view', 'report');
@@ -3256,39 +3280,58 @@ const App = () => {
     }
   }, []);
   
-  // Effect to load initial lightweight data and check session
+  // Effect to load initial lightweight data, check session, and verify token
   useEffect(() => {
-    const initialLoad = async () => {
+    const initialLoadAndVerify = async () => {
         setIsLoading(true);
         try {
-            const storedUserJson = sessionStorage.getItem('currentUser');
-            const shouldLoadCerts = !!storedUserJson; // Only load certs if a user is likely logged in
+            const token = searchParams.get('token');
+            if (token) {
+                 setVerificationStatus({ status: 'verifying', message: '🔍 Đang xác minh liên kết...' });
+                 const shouldLoadAllData = true; // Always load full data for verification
+                 await loadInitialData(shouldLoadAllData);
 
-            const loadedData = await loadInitialData(shouldLoadCerts);
-            if(!loadedData) return;
+                 const result = await api.verifyShareToken(token);
+                 if (result.success && result.id) {
+                     navigate('report-viewer', { id: String(result.id) });
+                     setVerificationStatus({ status: 'idle', message: '' }); // Reset after navigation
+                 } else {
+                     setVerificationStatus({ status: 'error', message: result.message || 'Lỗi không xác định.' });
+                 }
+            } else {
+                // Regular load logic
+                const storedUserJson = sessionStorage.getItem('currentUser');
+                const shouldLoadCerts = !!storedUserJson;
+                const loadedData = await loadInitialData(shouldLoadCerts);
+                if (!loadedData) return;
 
-            if (storedUserJson) {
-                const storedUser = JSON.parse(storedUserJson);
-                const matchingUser = loadedData.sanitizedUsers.find(u => u.id === Number(storedUser.id));
-                 if (matchingUser) {
-                    setCurrentUser(matchingUser);
-                    if (!matchingUser.passwordChangedAt) {
-                        setIsForcePasswordChange(true);
+                if (storedUserJson) {
+                    const storedUser = JSON.parse(storedUserJson);
+                    const matchingUser = loadedData.sanitizedUsers.find(u => u.id === Number(storedUser.id));
+                    if (matchingUser) {
+                        setCurrentUser(matchingUser);
+                        if (!matchingUser.passwordChangedAt) {
+                            setIsForcePasswordChange(true);
+                        }
+                    } else {
+                        setCurrentUser(null);
                     }
-                } else {
-                    setCurrentUser(null);
                 }
             }
-
         } catch (error) {
             console.error("Failed to perform initial load:", error);
-            setLoginError("Không thể tải dữ liệu từ máy chủ. Vui lòng thử lại sau.");
+            const errorMessage = "Không thể tải dữ liệu từ máy chủ. Vui lòng thử lại sau.";
+            if (searchParams.has('token')) {
+                setVerificationStatus({ status: 'error', message: errorMessage });
+            } else {
+                setLoginError(errorMessage);
+            }
         } finally {
             setIsLoading(false);
         }
     };
-    initialLoad();
-  }, [loadInitialData]);
+    initialLoadAndVerify();
+  }, [loadInitialData, searchParams]);
 
 
   const handleLogin = async (username: string, password: string) => {
@@ -3532,8 +3575,21 @@ const App = () => {
           navigate(defaultView);
       }
   };
+  
+  const VerificationScreen = ({ status, message }: { status: 'verifying' | 'error', message: string }) => (
+    <div className="verification-container">
+        <div className="verification-box">
+            <h2 className={status}>{message}</h2>
+            {status === 'verifying' && <div className="spinner" style={{marginTop: '20px'}}></div>}
+        </div>
+    </div>
+  );
 
   const renderPageContent = () => {
+    if (verificationStatus.status !== 'idle') {
+        return <VerificationScreen status={verificationStatus.status} message={verificationStatus.message} />;
+    }
+
     const view = searchParams.get('view');
     const id = searchParams.get('id');
 
@@ -3600,15 +3656,17 @@ const App = () => {
 
   const view = searchParams.get('view');
   const isPublicReportView = view === 'report' || (view === 'report-viewer' && searchParams.has('id'));
+  const isVerifying = verificationStatus.status !== 'idle';
+
 
   return (
     <>
       {isPublicReportView && <Navigation />}
-      <div className={`app-container ${!currentUser && !isPublicReportView ? 'login-view' : ''}`}>
+      <div className={`app-container ${(!currentUser && !isPublicReportView) || isVerifying ? 'login-view' : ''}`}>
         {isProcessing && <ProcessingOverlay />}
         {renderPageContent()}
       </div>
-      {(currentUser || isPublicReportView) && 
+      {(currentUser || isPublicReportView) && !isVerifying &&
         <footer className="app-footer">
           <p>Design by Nguyễn Trung Thành</p>
         </footer>

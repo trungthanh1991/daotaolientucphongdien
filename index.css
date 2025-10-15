@@ -1822,6 +1822,63 @@ nav.tabs li button.active::before {
     color: var(--primary-color);
 }
 
+/* Verification Screen */
+.verification-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-grow: 1;
+    padding: 20px;
+}
+.verification-box {
+    text-align: center;
+    padding: 40px;
+    background-color: var(--card-background);
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow);
+}
+.verification-box h2 {
+    font-size: 22px;
+    margin: 0;
+}
+.verification-box h2.verifying {
+    color: var(--primary-color);
+}
+.verification-box h2.error {
+    color: var(--danger-color);
+}
+
+
+/* Share Modal */
+.share-modal-content {
+    text-align: center;
+}
+.share-modal-content p {
+    margin: 16px 0;
+}
+.qr-code-container {
+    margin: 24px auto;
+    background: white;
+    padding: 16px;
+    display: inline-block;
+    border-radius: var(--border-radius);
+    border: 1px solid var(--border-color);
+}
+.share-url-container {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+}
+.share-url-container input {
+    flex-grow: 1;
+    padding: 10px;
+    font-size: 14px;
+    background-color: #f8f9fa;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+}
+
+
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
