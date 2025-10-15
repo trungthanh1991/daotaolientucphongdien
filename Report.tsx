@@ -1,7 +1,4 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-// FIX: Use a standard ES module import for qrcode.react. The `import = require()` syntax is not compatible with ECMAScript module targets.
-// Fix: Changed from default import to a named import `QRCodeSVG` to resolve JSX component type errors.
-import { QRCodeSVG as QRCode } from "qrcode.react";
 
 // --- Type definitions (assuming these are shared or passed down) ---
 interface ReportUser {
@@ -20,12 +17,6 @@ interface Certificate {
   credits: number;
 }
 
-// Define the shape of the API object we need to pass down
-interface ShareApi {
-    createShareableLink: (userId: number) => Promise<{ success: boolean; url: string }>;
-}
-
-
 // Helper function to normalize text for searching (remove accents, lowercase)
 const normalizeText = (text: string): string => {
     if (!text) return '';
@@ -35,68 +26,7 @@ const normalizeText = (text: string): string => {
         .replace(/[\u0300-\u036f]/g, "");
 };
 
-const ShareModal = ({ user, onClose, api }: { user: ReportUser, onClose: () => void, api: ShareApi }) => {
-    const [isLoading, setIsLoading] = useState(true);
-    const [qrUrl, setQrUrl] = useState('');
-    const [error, setError] = useState('');
-    const urlInputRef = useRef<HTMLInputElement>(null);
-
-    useEffect(() => {
-        const generateLink = async () => {
-            try {
-                const result = await api.createShareableLink(user.id);
-                if (result.success) {
-                    setQrUrl(result.url);
-                } else {
-                    throw new Error("Không thể tạo liên kết từ máy chủ.");
-                }
-            } catch (err: any) {
-                setError(err.message || "Đã xảy ra lỗi khi tạo liên kết chia sẻ.");
-            } finally {
-                setIsLoading(false);
-            }
-        };
-        generateLink();
-    }, [user.id, api]);
-
-    const handleCopy = () => {
-        if (urlInputRef.current) {
-            urlInputRef.current.select();
-            document.execCommand('copy');
-            alert('Đã sao chép liên kết!');
-        }
-    };
-
-    return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div className="modal-content share-modal-content" onClick={e => e.stopPropagation()}>
-                <h2>Chia sẻ báo cáo của {user.name}</h2>
-                {isLoading && <div className="spinner" style={{ margin: '40px auto' }}></div>}
-                {error && <p className="error">{error}</p>}
-                {qrUrl && (
-                    <>
-                        <p>Sử dụng mã QR hoặc sao chép liên kết bên dưới để chia sẻ báo cáo này.</p>
-                        <div className="qr-code-container">
-                            <QRCode value={qrUrl} size={256} />
-                        </div>
-                        <div className="share-url-container">
-                            <input ref={urlInputRef} type="text" value={qrUrl} readOnly />
-                            <button className="btn btn-secondary" onClick={handleCopy}>
-                                <span className="material-icons">content_copy</span> Sao chép
-                            </button>
-                        </div>
-                    </>
-                )}
-                <div className="modal-actions" style={{justifyContent: 'center'}}>
-                    <button className="btn btn-primary" onClick={onClose}>Đóng</button>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-
-export function Report({ allUsers, allCertificates, api }: { allUsers: ReportUser[], allCertificates: Certificate[], api: ShareApi }) {
+export function Report({ allUsers, allCertificates }: { allUsers: ReportUser[], allCertificates: Certificate[] }) {
   const [filterDepartment, setFilterDepartment] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [viewingUser, setViewingUser] = useState<ReportUser | null>(null);
@@ -132,7 +62,6 @@ export function Report({ allUsers, allCertificates, api }: { allUsers: ReportUse
   return (
     <>
       <div className="report-page-container">
-        <h2>Danh sách nhân viên</h2>
         
         <div className="report-filters">
             <div className="filter-item">
@@ -202,7 +131,6 @@ export function Report({ allUsers, allCertificates, api }: { allUsers: ReportUse
             user={viewingUser}
             allCertificates={allCertificates}
             onClose={() => setViewingUser(null)}
-            api={api}
         />
       )}
     </>
@@ -210,8 +138,7 @@ export function Report({ allUsers, allCertificates, api }: { allUsers: ReportUse
 }
 
 
-const UserDetailsModal = ({ user, allCertificates, onClose, api }: { user: ReportUser, allCertificates: Certificate[], onClose: () => void, api: ShareApi }) => {
-    const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+const UserDetailsModal = ({ user, allCertificates, onClose }: { user: ReportUser, allCertificates: Certificate[], onClose: () => void }) => {
     const userCerts = useMemo(() => allCertificates.filter(c => c.userId === user.id), [allCertificates, user.id]);
     
     const allTimeTotals = useMemo(() => {
@@ -233,7 +160,8 @@ const UserDetailsModal = ({ user, allCertificates, onClose, api }: { user: Repor
         }
     }, [availableYears, selectedYear]);
 
-    const certsForYear = useMemo(() => selectedYear ? userCerts.filter(c => new Date(c.date).getFullYear() === selectedYear) : [], [userCerts, selectedYear]);
+    // FIX: Show all user certificates when no year is selected (selectedYear is null)
+    const certsForYear = useMemo(() => selectedYear ? userCerts.filter(c => new Date(c.date).getFullYear() === selectedYear) : userCerts, [userCerts, selectedYear]);
     const totalCreditsForYear = useMemo(() => certsForYear.reduce((sum, cert) => sum + Number(cert.credits || 0), 0), [certsForYear]);
 
     return (
@@ -243,9 +171,6 @@ const UserDetailsModal = ({ user, allCertificates, onClose, api }: { user: Repor
                 <div className="report-viewer-modal-header">
                     <h3>Chi tiết chứng chỉ của {user.name}</h3>
                      <div>
-                        <button className="btn btn-secondary" style={{marginRight: '10px'}} onClick={() => setIsShareModalOpen(true)}>
-                            <span className="material-icons" style={{fontSize: '20px'}}>qr_code_2</span> Tạo QR chia sẻ
-                        </button>
                         <button className="close-btn" onClick={onClose}>&times;</button>
                     </div>
                 </div>
@@ -265,7 +190,8 @@ const UserDetailsModal = ({ user, allCertificates, onClose, api }: { user: Repor
                              {availableYears.map(year => <option key={year} value={year}>{year}</option>)}
                         </select>
                         <div className="credits-summary">
-                            <span>Tổng tiết năm {selectedYear || ''}:</span>
+                            {/* FIX: Update label to be context-aware */}
+                            <span>{selectedYear ? `Tổng tiết năm ${selectedYear}:` : 'Tổng số tiết (tất cả các năm):'}</span>
                             <strong>{Number.isInteger(totalCreditsForYear) ? totalCreditsForYear : totalCreditsForYear.toFixed(1)}</strong>
                         </div>
                     </div>
@@ -279,18 +205,17 @@ const UserDetailsModal = ({ user, allCertificates, onClose, api }: { user: Repor
                                     <th>Số tiết</th>
                                 </tr>
                             </thead>
+                            {/* FIX: Populate table body with certificate data for the selected year */}
                             <tbody>
-                                {certsForYear.length > 0 ? (
-                                    certsForYear.map((cert, index) => (
-                                        <tr key={cert.id}>
-                                            <td data-label="STT">{index + 1}</td>
-                                            <td data-label="Tên chứng chỉ">{cert.name}</td>
-                                            <td data-label="Số tiết">{cert.credits}</td>
-                                        </tr>
-                                    ))
-                                ) : (
+                                {certsForYear.length > 0 ? certsForYear.map((cert, index) => (
+                                    <tr key={cert.id}>
+                                        <td>{index + 1}</td>
+                                        <td>{cert.name}</td>
+                                        <td>{cert.credits}</td>
+                                    </tr>
+                                )) : (
                                     <tr>
-                                        <td colSpan={3} style={{textAlign: 'center'}}>Không có chứng chỉ nào trong năm {selectedYear || ''}. Chọn năm khác để xem.</td>
+                                        <td colSpan={3}>Không có chứng chỉ nào cho năm đã chọn.</td>
                                     </tr>
                                 )}
                             </tbody>
@@ -299,92 +224,84 @@ const UserDetailsModal = ({ user, allCertificates, onClose, api }: { user: Repor
                 </div>
             </div>
         </div>
-        {isShareModalOpen && <ShareModal user={user} onClose={() => setIsShareModalOpen(false)} api={api} />}
         </>
     );
 };
 
+// FIX: Add and export ReportViewer component to be used for public shared links.
 export function ReportViewer({ id, allUsers, allCertificates }: { id: string, allUsers: ReportUser[], allCertificates: Certificate[] }) {
-    const [viewingUser, setViewingUser] = useState<ReportUser | null>(null);
-    const [error, setError] = useState('');
-    const [selectedYear, setSelectedYear] = useState<number | null>(null);
+    const user = useMemo(() => allUsers.find(u => String(u.id) === id), [allUsers, id]);
 
-    useEffect(() => {
-        if (allUsers.length > 0) {
-            const userToShow = allUsers.find(u => String(u.id) === id);
-            if (userToShow) {
-                setViewingUser(userToShow);
-                const userCerts = allCertificates.filter(c => c.userId === userToShow.id);
-                const availableYears = [...new Set(userCerts.map(c => new Date(c.date).getFullYear()))].sort((a, b) => b - a);
-                if (availableYears.length > 0) {
-                    setSelectedYear(availableYears[0]);
-                }
-            } else {
-                setError(`Không tìm thấy người dùng với ID: ${id}`);
-            }
-        }
-    }, [id, allUsers, allCertificates]);
+    const userCerts = useMemo(() => {
+        if (!user) return [];
+        return allCertificates.filter(c => c.userId === user.id);
+    }, [allCertificates, user]);
 
-    if (!viewingUser && !error) return (
-        <div className="report-page-container">
-            <h2>Đang tải...</h2>
-        </div>
-    );
+    const allTimeTotals = useMemo(() => {
+        const totalCredits = userCerts.reduce((sum, cert) => sum + Number(cert.credits || 0), 0);
+        return {
+            count: userCerts.length,
+            credits: Number.isInteger(totalCredits) ? totalCredits : totalCredits.toFixed(1)
+        };
+    }, [userCerts]);
 
-    if (error) return (
-        <div className="report-page-container">
-            <h2 className="error">{error}</h2>
-        </div>
-    );
+    const availableYears = useMemo(() => [...new Set(userCerts.map(c => new Date(c.date).getFullYear()))].sort((a, b) => b - a), [userCerts]);
+    const [selectedYear, setSelectedYear] = useState<number | null>(null); // Default to all years
+
+    const certsForYear = useMemo(() => selectedYear ? userCerts.filter(c => new Date(c.date).getFullYear() === selectedYear) : userCerts, [userCerts, selectedYear]);
+    const totalCreditsForYear = useMemo(() => certsForYear.reduce((sum, cert) => sum + Number(cert.credits || 0), 0), [certsForYear]);
+
+    if (allUsers.length > 0 && !user) {
+        return (
+            <div className="report-page-container">
+                 <div className="report-viewer-header">
+                    <h1>Không tìm thấy nhân viên</h1>
+                 </div>
+                 <p>Liên kết này có thể đã cũ hoặc không hợp lệ. Vui lòng kiểm tra lại.</p>
+            </div>
+        );
+    }
     
-    if (!viewingUser) return null;
+    if (!user) {
+         return (
+            <div className="report-page-container">
+                <p>Đang tải dữ liệu...</p>
+            </div>
+        );
+    }
 
-    // Calculate all-time totals
-    const userCerts = allCertificates.filter(c => c.userId === viewingUser.id);
-    const allTimeTotals = {
-        count: userCerts.length,
-        credits: userCerts.reduce((sum, cert) => sum + Number(cert.credits || 0), 0)
-    };
-    const formattedAllTimeCredits = Number.isInteger(allTimeTotals.credits) ? allTimeTotals.credits : allTimeTotals.credits.toFixed(1);
-
-    const availableYears = [...new Set(userCerts.map(c => new Date(c.date).getFullYear()))].sort((a, b) => b - a);
-    const certsForYear = selectedYear ? userCerts.filter(c => new Date(c.date).getFullYear() === selectedYear) : [];
-    const totalCreditsForYear = certsForYear.reduce((sum, cert) => sum + Number(cert.credits || 0), 0);
-    
     return (
-        <div className="report-page-container report-viewer-standalone">
+        <div className="report-page-container">
             <div className="report-viewer-header">
-                <h2>Báo cáo Kết quả Đào tạo Liên tục</h2>
-                <p><strong>Nhân viên:</strong> {viewingUser.name}</p>
-                <p><strong>Khoa/Phòng:</strong> {viewingUser.department}</p>
+                <h1>Hồ sơ đào tạo liên tục</h1>
+                <h2>{user.name}</h2>
+                <p>{user.department}</p>
             </div>
 
-            <div className="report-viewer-summary-standalone">
-                <div className="summary-item">
-                    <span className="label">Tổng số chứng chỉ</span>
-                    <span className="value">{allTimeTotals.count}</span>
+            <div className="report-viewer-content">
+                <div className="modal-summary">
+                    <p>
+                        <span>Tổng cộng:</span> 
+                        <strong>{allTimeTotals.count}</strong> chứng chỉ, 
+                        <strong> {allTimeTotals.credits}</strong> tiết
+                    </p>
                 </div>
-                <div className="summary-item">
-                    <span className="label">Tổng số tiết (Tất cả năm)</span>
-                    <span className="value">{formattedAllTimeCredits}</span>
-                </div>
-            </div>
 
-            <div className="report-details-section">
                 <div className="year-selector">
-                    <label htmlFor="cert-year">Xem chi tiết theo năm:</label>
-                    <select id="cert-year" value={selectedYear || ''} onChange={e => setSelectedYear(Number(e.target.value))}>
-                         {availableYears.map(year => <option key={year} value={year}>{year}</option>)}
+                    <label htmlFor="cert-year">Lọc theo năm:</label>
+                    <select id="cert-year" value={selectedYear || ''} onChange={e => setSelectedYear(e.target.value ? Number(e.target.value) : null)}>
+                        <option value="">-- Tất cả các năm --</option>
+                        {availableYears.map(year => <option key={year} value={year}>{year}</option>)}
                     </select>
                     <div className="credits-summary">
-                        <span>Tổng tiết năm {selectedYear}:</span>
+                        <span>{selectedYear ? `Tổng tiết năm ${selectedYear}:` : 'Tổng số tiết (tất cả các năm):'}</span>
                         <strong>{Number.isInteger(totalCreditsForYear) ? totalCreditsForYear : totalCreditsForYear.toFixed(1)}</strong>
                     </div>
                 </div>
 
                 <div className="details-table-container">
                     <table className="details-table">
-                         <thead>
+                        <thead>
                             <tr>
                                 <th>STT</th>
                                 <th>Tên chứng chỉ</th>
@@ -392,17 +309,15 @@ export function ReportViewer({ id, allUsers, allCertificates }: { id: string, al
                             </tr>
                         </thead>
                         <tbody>
-                            {certsForYear.length > 0 ? (
-                                certsForYear.map((cert, index) => (
-                                    <tr key={cert.id}>
-                                        <td data-label="STT">{index + 1}</td>
-                                        <td data-label="Tên chứng chỉ">{cert.name}</td>
-                                        <td data-label="Số tiết">{cert.credits}</td>
-                                    </tr>
-                                ))
-                            ) : (
+                            {certsForYear.length > 0 ? certsForYear.map((cert, index) => (
+                                <tr key={cert.id}>
+                                    <td data-label="STT">{index + 1}</td>
+                                    <td data-label="Tên chứng chỉ">{cert.name}</td>
+                                    <td data-label="Số tiết">{cert.credits}</td>
+                                </tr>
+                            )) : (
                                 <tr>
-                                    <td colSpan={3} style={{textAlign: 'center'}}>Không có chứng chỉ nào trong năm {selectedYear || ''}.</td>
+                                    <td colSpan={3}>Không có chứng chỉ nào được tìm thấy.</td>
                                 </tr>
                             )}
                         </tbody>

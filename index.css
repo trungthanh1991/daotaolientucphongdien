@@ -1270,6 +1270,20 @@ nav.tabs li button.active::before {
     position: relative;
     max-width: 500px;
 }
+.inspection-search-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+.inspection-search-header label {
+    font-weight: 500;
+    margin-bottom: 0;
+}
+.inspection-search-header .btn {
+    padding: 6px 12px;
+    font-size: 14px;
+}
 .inspection-search-container label {
     font-weight: 500;
     margin-bottom: 8px;

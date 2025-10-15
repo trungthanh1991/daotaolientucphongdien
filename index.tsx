@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { Chart, registerables, ChartType } from 'chart.js';
 import { Report, ReportViewer } from "./Report";
 import "./report.css";
+import { QRCodeSVG as QRCode } from "qrcode.react";
 Chart.register(...registerables);
 
 // For Excel export
@@ -1321,6 +1322,39 @@ interface Message {
     text: string;
 }
 
+const ShareModal = ({ title, urlToShare, onClose }: { title: string, urlToShare: string, onClose: () => void }) => {
+    const urlInputRef = useRef<HTMLInputElement>(null);
+
+    const handleCopy = () => {
+        if (urlInputRef.current) {
+            urlInputRef.current.select();
+            document.execCommand('copy');
+            alert('Đã sao chép liên kết!');
+        }
+    };
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal-content share-modal-content" onClick={e => e.stopPropagation()}>
+                <h2>{title}</h2>
+                <p>Sử dụng mã QR hoặc sao chép liên kết bên dưới để chia sẻ.</p>
+                <div className="qr-code-container">
+                    <QRCode value={urlToShare} size={256} />
+                </div>
+                <div className="share-url-container">
+                    <input ref={urlInputRef} type="text" value={urlToShare} readOnly />
+                    <button className="btn btn-secondary" onClick={handleCopy}>
+                        <span className="material-icons">content_copy</span> Sao chép
+                    </button>
+                </div>
+                <div className="modal-actions" style={{justifyContent: 'center'}}>
+                    <button className="btn btn-primary" onClick={onClose}>Đóng</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const AIAssistantTab = ({ certificates, users }: { certificates: Certificate[], users: User[] }) => {
     const [messages, setMessages] = useState<Message[]>([
         { sender: 'ai', text: 'Xin chào! Tôi là trợ lý AI. Hãy hỏi tôi các câu hỏi phân tích về dữ liệu đào tạo.' }
@@ -1437,6 +1471,7 @@ const InspectionView = ({ users, certificates, user, onUpdateCertificate, onDele
     const [expandedCertId, setExpandedCertId] = useState<number | null>(null);
     const [editingCertificate, setEditingCertificate] = useState<Certificate | null>(null);
     const [confirmation, setConfirmation] = useState<{message: string, onConfirm: () => void} | null>(null);
+    const [isShareModalOpen, setIsShareModalOpen] = useState(false);
     const searchRef = useRef<HTMLDivElement>(null);
 
     const allUserEmployees = useMemo(() => {
@@ -1514,7 +1549,12 @@ const InspectionView = ({ users, certificates, user, onUpdateCertificate, onDele
     return (
         <div className="inspection-view-container">
             <div className="inspection-search-container" ref={searchRef}>
-                <label htmlFor="inspection-search">Tìm kiếm nhân viên</label>
+                <div className="inspection-search-header">
+                    <label htmlFor="inspection-search">Tìm kiếm nhân viên</label>
+                    <button className="btn btn-secondary" onClick={() => setIsShareModalOpen(true)}>
+                        <span className="material-icons" style={{fontSize: '20px'}}>qr_code_2</span> Tạo QR chia sẻ
+                    </button>
+                </div>
                 <div className="search-input-wrapper">
                     <input
                         id="inspection-search"
@@ -1627,6 +1667,13 @@ const InspectionView = ({ users, certificates, user, onUpdateCertificate, onDele
                     message={confirmation.message}
                     onConfirm={confirmation.onConfirm}
                     onCancel={() => setConfirmation(null)}
+                />
+            )}
+            {isShareModalOpen && (
+                <ShareModal
+                    title="Chia sẻ trang Danh sách nhân viên"
+                    urlToShare="https://daotaolientucphongdien.vercel.app/?view=report"
+                    onClose={() => setIsShareModalOpen(false)}
                 />
             )}
         </div>
@@ -3598,7 +3645,7 @@ const App = () => {
     }
 
     if (view === 'report') {
-        return <Report allUsers={users} allCertificates={certificates} api={api} />;
+        return <Report allUsers={users} allCertificates={certificates} />;
     }
     
     if (currentUser && isForcePasswordChange) {
