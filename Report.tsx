@@ -150,17 +150,19 @@ const UserDetailsModal = ({ user, allCertificates, onClose }: { user: ReportUser
     }, [userCerts]);
 
     const availableYears = useMemo(() => [...new Set(userCerts.map(c => new Date(c.date).getFullYear()))].sort((a, b) => b - a), [userCerts]);
-    const [selectedYear, setSelectedYear] = useState<number | null>(availableYears.length > 0 ? availableYears[0] : null);
+    const [selectedYear, setSelectedYear] = useState<number | null>(null);
 
     useEffect(() => {
-        if (selectedYear === null && availableYears.length > 0) {
+        // When the component mounts or availableYears changes for a new user,
+        // set the default selection to the latest year.
+        // This allows the user to change the selection afterwards without being overridden.
+        if (availableYears.length > 0) {
             setSelectedYear(availableYears[0]);
-        } else if (selectedYear !== null && !availableYears.includes(selectedYear)) {
-            setSelectedYear(availableYears.length > 0 ? availableYears[0] : null);
+        } else {
+            setSelectedYear(null);
         }
-    }, [availableYears, selectedYear]);
+    }, [availableYears]);
 
-    // FIX: Show all user certificates when no year is selected (selectedYear is null)
     const certsForYear = useMemo(() => selectedYear ? userCerts.filter(c => new Date(c.date).getFullYear() === selectedYear) : userCerts, [userCerts, selectedYear]);
     const totalCreditsForYear = useMemo(() => certsForYear.reduce((sum, cert) => sum + Number(cert.credits || 0), 0), [certsForYear]);
 
@@ -190,7 +192,6 @@ const UserDetailsModal = ({ user, allCertificates, onClose }: { user: ReportUser
                              {availableYears.map(year => <option key={year} value={year}>{year}</option>)}
                         </select>
                         <div className="credits-summary">
-                            {/* FIX: Update label to be context-aware */}
                             <span>{selectedYear ? `Tổng tiết năm ${selectedYear}:` : 'Tổng số tiết (tất cả các năm):'}</span>
                             <strong>{Number.isInteger(totalCreditsForYear) ? totalCreditsForYear : totalCreditsForYear.toFixed(1)}</strong>
                         </div>
@@ -205,7 +206,6 @@ const UserDetailsModal = ({ user, allCertificates, onClose }: { user: ReportUser
                                     <th>Số tiết</th>
                                 </tr>
                             </thead>
-                            {/* FIX: Populate table body with certificate data for the selected year */}
                             <tbody>
                                 {certsForYear.length > 0 ? certsForYear.map((cert, index) => (
                                     <tr key={cert.id}>
@@ -228,7 +228,6 @@ const UserDetailsModal = ({ user, allCertificates, onClose }: { user: ReportUser
     );
 };
 
-// FIX: Add and export ReportViewer component to be used for public shared links.
 export function ReportViewer({ id, allUsers, allCertificates }: { id: string, allUsers: ReportUser[], allCertificates: Certificate[] }) {
     const user = useMemo(() => allUsers.find(u => String(u.id) === id), [allUsers, id]);
 
