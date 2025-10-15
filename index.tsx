@@ -112,7 +112,6 @@ const api = {
             throw new Error("Backend URL not configured.");
         }
         
-        const isQrRequest = baseUrl === QR_BACKEND_URL;
         let url = baseUrl;
         const options: RequestInit = {
             method,
@@ -122,8 +121,11 @@ const api = {
         if (method === 'POST') {
              options.headers = { 'Content-Type': 'text/plain;charset=utf-8' }; // Required for Apps Script POST
              options.body = JSON.stringify({ action, payload });
-        } else if (method === 'GET' && !isQrRequest) {
-            url += '?action=fetchInitialData';
+        } else if (action) {
+             url += `?action=${action}`;
+             if (payload) {
+                 url += `&${new URLSearchParams(payload).toString()}`;
+             }
         }
         
         try {
@@ -135,7 +137,7 @@ const api = {
                 throw new Error(result.message || 'An unknown API error occurred.');
             }
             
-            return result; // Return the whole result for QR API, just data for main API
+            return result;
 
         } catch (error) {
             console.error(`API request failed for action: ${action}`, error);
@@ -166,17 +168,15 @@ const api = {
 
     // FETCH heavy data (certificates) separately
     fetchCertificates: async (): Promise<Certificate[]> => {
-        return api.mainApiRequest('POST', 'fetchCertificates');
+        return api.mainApiRequest('GET', 'fetchCertificates');
     },
     
     // QR Code Link Generation and Verification
     createShareableLink: async (userId: number): Promise<{ success: boolean; url: string }> => {
-        const url = `${QR_BACKEND_URL}?action=createLink&id=${userId}`;
-        return api.request('GET', 'createLink', undefined, url);
+        return api.request('GET', 'createLink', { id: userId }, QR_BACKEND_URL);
     },
     verifyShareToken: async (token: string): Promise<{ success: boolean; id?: number; message: string }> => {
-        const url = `${QR_BACKEND_URL}?action=verify&token=${token}`;
-        return api.request('GET', 'verify', undefined, url);
+        return api.request('GET', 'verify', { token }, QR_BACKEND_URL);
     },
 
     // AUTHENTICATION
@@ -1472,6 +1472,8 @@ const InspectionView = ({ users, certificates, user, onUpdateCertificate, onDele
     const [editingCertificate, setEditingCertificate] = useState<Certificate | null>(null);
     const [confirmation, setConfirmation] = useState<{message: string, onConfirm: () => void} | null>(null);
     const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+    const [shareUrl, setShareUrl] = useState('');
+    const [isGeneratingLink, setIsGeneratingLink] = useState(false);
     const searchRef = useRef<HTMLDivElement>(null);
 
     const allUserEmployees = useMemo(() => {
@@ -1517,6 +1519,26 @@ const InspectionView = ({ users, certificates, user, onUpdateCertificate, onDele
         setSuggestions([]);
         setExpandedCertId(null);
     };
+    
+    const handleGenerateShareLink = async () => {
+        setIsGeneratingLink(true);
+        try {
+            // Use a special ID (0) to request a link for the main report page.
+            // The backend needs to be configured to handle this.
+            const result = await api.createShareableLink(0); 
+            if (result.success && result.url) {
+                setShareUrl(result.url);
+                setIsShareModalOpen(true);
+            } else {
+                alert('Không thể tạo liên kết chia sẻ. Vui lòng thử lại.');
+            }
+        } catch (error) {
+            console.error('Failed to create shareable link:', error);
+            alert('Đã xảy ra lỗi khi tạo liên kết chia sẻ.');
+        } finally {
+            setIsGeneratingLink(false);
+        }
+    };
 
     const selectedUserCerts = useMemo(() => {
         if (!selectedUser) return [];
@@ -1551,8 +1573,9 @@ const InspectionView = ({ users, certificates, user, onUpdateCertificate, onDele
             <div className="inspection-search-container" ref={searchRef}>
                 <div className="inspection-search-header">
                     <label htmlFor="inspection-search">Tìm kiếm nhân viên</label>
-                    <button className="btn btn-secondary" onClick={() => setIsShareModalOpen(true)}>
-                        <span className="material-icons" style={{fontSize: '20px'}}>qr_code_2</span> Tạo QR chia sẻ
+                    <button className="btn btn-secondary" onClick={handleGenerateShareLink} disabled={isGeneratingLink}>
+                        <span className="material-icons" style={{fontSize: '20px'}}>qr_code_2</span>
+                        {isGeneratingLink ? 'Đang tạo...' : 'Tạo QR chia sẻ'}
                     </button>
                 </div>
                 <div className="search-input-wrapper">
@@ -1672,7 +1695,7 @@ const InspectionView = ({ users, certificates, user, onUpdateCertificate, onDele
             {isShareModalOpen && (
                 <ShareModal
                     title="Chia sẻ trang Danh sách nhân viên"
-                    urlToShare="https://daotaolientucphongdien.vercel.app/?view=report"
+                    urlToShare={shareUrl}
                     onClose={() => setIsShareModalOpen(false)}
                 />
             )}
@@ -3121,18 +3144,6 @@ const App = () => {
         setSearchParams(new URLSearchParams(window.location.search));
     };
     window.addEventListener('popstate', handleUrlChange);
-    
-    // Handle initial URL state
-    const currentParams = new URLSearchParams(window.location.search);
-    const currentView = currentParams.get('view');
-    if (currentView && (currentView.startsWith('report-') || currentView.startsWith('report_'))) {
-        const newParams = new URLSearchParams(window.location.search);
-        newParams.set('view', 'report');
-        const newUrl = `${window.location.pathname}?${newParams.toString()}`;
-        window.history.replaceState({}, '', newUrl);
-        setSearchParams(newParams);
-    }
-
     return () => window.removeEventListener('popstate', handleUrlChange);
   }, []);
 
@@ -3299,7 +3310,6 @@ const App = () => {
 
   const loadInitialData = useCallback(async (loadCerts: boolean) => {
     try {
-        // Fetch lightweight initial data
         const { users: rawUsers, titles: rawTitles, googleSheetUrl, googleFolderUrl, complianceStartYear: startYearFromApi } = await api.fetchInitialData();
         
         const sanitizedUsers = rawUsers.map(sanitizeUser).filter((u): u is User => u !== null);
@@ -3313,62 +3323,72 @@ const App = () => {
             setComplianceStartYear(startYearFromApi);
         }
 
-        // Conditionally fetch heavy certificate data
         if (loadCerts) {
             const rawCertificates = await api.fetchCertificates();
-            const sanitizedCertificates = rawCertificates.map(sanitizeCertificate).filter((c): c is Certificate => c !== null);
+            // Ensure rawCertificates is an array before mapping to prevent crash
+            const certsArray = Array.isArray(rawCertificates) ? rawCertificates : [];
+            const sanitizedCertificates = certsArray.map(sanitizeCertificate).filter((c): c is Certificate => c !== null);
             setCertificates(sanitizedCertificates);
         }
         
-        return { sanitizedUsers }; // Return users for session check
+        return { sanitizedUsers };
     } catch (error) {
         console.error("Failed to load initial data:", error);
         throw error;
     }
   }, []);
   
-  // Effect to load initial lightweight data, check session, and verify token
   useEffect(() => {
     const initialLoadAndVerify = async () => {
         setIsLoading(true);
         try {
-            const token = searchParams.get('token');
+            const currentParams = new URLSearchParams(window.location.search);
+            const token = currentParams.get('token');
+            const view = currentParams.get('view');
+            
+            const isPublicView = view === 'report' || view === 'report-viewer' || !!token;
+            const storedUserJson = sessionStorage.getItem('currentUser');
+            const shouldLoadCerts = !!storedUserJson || isPublicView;
+
+            const loadedData = await loadInitialData(shouldLoadCerts);
+
             if (token) {
                  setVerificationStatus({ status: 'verifying', message: '🔍 Đang xác minh liên kết...' });
-                 const shouldLoadAllData = true; // Always load full data for verification
-                 await loadInitialData(shouldLoadAllData);
-
                  const result = await api.verifyShareToken(token);
-                 if (result.success && result.id) {
-                     navigate('report-viewer', { id: String(result.id) });
-                     setVerificationStatus({ status: 'idle', message: '' }); // Reset after navigation
+                 if (result.success) {
+                     const newParams = new URLSearchParams();
+                     // Check for special ID (0) for main report page
+                     if (result.id === 0) { 
+                         newParams.set('view', 'report');
+                     } else if (result.id) { // Regular ID for a specific user
+                         newParams.set('view', 'report-viewer');
+                         newParams.set('id', String(result.id));
+                     }
+                     window.history.replaceState({}, '', `${window.location.pathname}?${newParams.toString()}`);
+                     setSearchParams(newParams);
+                     setVerificationStatus({ status: 'idle', message: '' });
                  } else {
-                     setVerificationStatus({ status: 'error', message: result.message || 'Lỗi không xác định.' });
+                     setVerificationStatus({ status: 'error', message: result.message || 'Liên kết không hợp lệ hoặc đã hết hạn.' });
+                     window.history.replaceState({}, '', window.location.pathname);
+                     setSearchParams(new URLSearchParams());
                  }
-            } else {
-                // Regular load logic
-                const storedUserJson = sessionStorage.getItem('currentUser');
-                const shouldLoadCerts = !!storedUserJson;
-                const loadedData = await loadInitialData(shouldLoadCerts);
+            } else if (storedUserJson) {
                 if (!loadedData) return;
-
-                if (storedUserJson) {
-                    const storedUser = JSON.parse(storedUserJson);
-                    const matchingUser = loadedData.sanitizedUsers.find(u => u.id === Number(storedUser.id));
-                    if (matchingUser) {
-                        setCurrentUser(matchingUser);
-                        if (!matchingUser.passwordChangedAt) {
-                            setIsForcePasswordChange(true);
-                        }
-                    } else {
-                        setCurrentUser(null);
+                const storedUser = JSON.parse(storedUserJson);
+                const matchingUser = loadedData.sanitizedUsers.find(u => u.id === Number(storedUser.id));
+                if (matchingUser) {
+                    setCurrentUser(matchingUser);
+                    if (!matchingUser.passwordChangedAt) {
+                        setIsForcePasswordChange(true);
                     }
+                } else {
+                    setCurrentUser(null);
                 }
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error("Failed to perform initial load:", error);
             const errorMessage = "Không thể tải dữ liệu từ máy chủ. Vui lòng thử lại sau.";
-            if (searchParams.has('token')) {
+             if (new URLSearchParams(window.location.search).has('token')) {
                 setVerificationStatus({ status: 'error', message: errorMessage });
             } else {
                 setLoginError(errorMessage);
@@ -3377,18 +3397,18 @@ const App = () => {
             setIsLoading(false);
         }
     };
+    
     initialLoadAndVerify();
-  }, [loadInitialData, searchParams]);
+
+  }, [loadInitialData]);
 
 
   const handleLogin = async (username: string, password: string) => {
     setLoginError('');
     setIsProcessing(true);
     try {
-        // The login API now returns the initial data payload
         const { loggedInUser, users: rawUsers, titles: rawTitles, googleSheetUrl, googleFolderUrl, complianceStartYear: startYearFromApi } = await api.login(username, password);
         
-        // Sanitize and set state with the data from the login response
         const sanitizedUsers = rawUsers.map(sanitizeUser).filter((u): u is User => u !== null);
         const sanitizedTitles = (rawTitles || []).map(sanitizeTitle).filter((t): t is Title => t !== null);
 
@@ -3398,13 +3418,13 @@ const App = () => {
         setGoogleFolderUrl(googleFolderUrl);
         if (startYearFromApi) setComplianceStartYear(startYearFromApi);
         
-        // Also fetch certificates after a successful login
         const rawCertificates = await api.fetchCertificates();
-        const sanitizedCertificates = rawCertificates.map(sanitizeCertificate).filter((c): c is Certificate => c !== null);
+        // Ensure rawCertificates is an array before mapping to prevent crash
+        const certsArray = Array.isArray(rawCertificates) ? rawCertificates : [];
+        const sanitizedCertificates = certsArray.map(sanitizeCertificate).filter((c): c is Certificate => c !== null);
         setCertificates(sanitizedCertificates);
 
 
-        // Find the current user from the newly loaded full list to ensure data consistency
         const matchedUser = sanitizedUsers.find(u => u.id === Number(loggedInUser.id));
         if (matchedUser) {
             setCurrentUser(matchedUser);
