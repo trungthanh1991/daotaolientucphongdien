@@ -20,10 +20,11 @@ interface Certificate {
   credits: number;
 }
 
-// --- API functions (assuming they are defined in index.tsx and passed down or imported) ---
-declare const api: {
+// Define the shape of the API object we need to pass down
+interface ShareApi {
     createShareableLink: (userId: number) => Promise<{ success: boolean; url: string }>;
-};
+}
+
 
 // Helper function to normalize text for searching (remove accents, lowercase)
 const normalizeText = (text: string): string => {
@@ -34,7 +35,7 @@ const normalizeText = (text: string): string => {
         .replace(/[\u0300-\u036f]/g, "");
 };
 
-const ShareModal = ({ user, onClose }: { user: ReportUser, onClose: () => void }) => {
+const ShareModal = ({ user, onClose, api }: { user: ReportUser, onClose: () => void, api: ShareApi }) => {
     const [isLoading, setIsLoading] = useState(true);
     const [qrUrl, setQrUrl] = useState('');
     const [error, setError] = useState('');
@@ -56,7 +57,7 @@ const ShareModal = ({ user, onClose }: { user: ReportUser, onClose: () => void }
             }
         };
         generateLink();
-    }, [user.id]);
+    }, [user.id, api]);
 
     const handleCopy = () => {
         if (urlInputRef.current) {
@@ -95,7 +96,7 @@ const ShareModal = ({ user, onClose }: { user: ReportUser, onClose: () => void }
 };
 
 
-export function Report({ allUsers, allCertificates }: { allUsers: ReportUser[], allCertificates: Certificate[] }) {
+export function Report({ allUsers, allCertificates, api }: { allUsers: ReportUser[], allCertificates: Certificate[], api: ShareApi }) {
   const [filterDepartment, setFilterDepartment] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [viewingUser, setViewingUser] = useState<ReportUser | null>(null);
@@ -201,6 +202,7 @@ export function Report({ allUsers, allCertificates }: { allUsers: ReportUser[], 
             user={viewingUser}
             allCertificates={allCertificates}
             onClose={() => setViewingUser(null)}
+            api={api}
         />
       )}
     </>
@@ -208,7 +210,7 @@ export function Report({ allUsers, allCertificates }: { allUsers: ReportUser[], 
 }
 
 
-const UserDetailsModal = ({ user, allCertificates, onClose }: { user: ReportUser, allCertificates: Certificate[], onClose: () => void }) => {
+const UserDetailsModal = ({ user, allCertificates, onClose, api }: { user: ReportUser, allCertificates: Certificate[], onClose: () => void, api: ShareApi }) => {
     const [isShareModalOpen, setIsShareModalOpen] = useState(false);
     const userCerts = useMemo(() => allCertificates.filter(c => c.userId === user.id), [allCertificates, user.id]);
     
@@ -297,7 +299,7 @@ const UserDetailsModal = ({ user, allCertificates, onClose }: { user: ReportUser
                 </div>
             </div>
         </div>
-        {isShareModalOpen && <ShareModal user={user} onClose={() => setIsShareModalOpen(false)} />}
+        {isShareModalOpen && <ShareModal user={user} onClose={() => setIsShareModalOpen(false)} api={api} />}
         </>
     );
 };

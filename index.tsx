@@ -3598,7 +3598,7 @@ const App = () => {
     }
 
     if (view === 'report') {
-        return <Report allUsers={users} allCertificates={certificates} />;
+        return <Report allUsers={users} allCertificates={certificates} api={api} />;
     }
     
     if (currentUser && isForcePasswordChange) {
