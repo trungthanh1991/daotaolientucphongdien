@@ -3026,7 +3026,7 @@ const ProcessingOverlay = () => (
 const Navigation = () => (
     <nav className="main-nav">
         <a href="?view=personal_info">Trang chính</a>
-        <a href="?view=report">Tạo Báo cáo</a>
+        <a href="?view=report">Danh sách NV</a>
     </nav>
 );
 

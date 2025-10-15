@@ -59,34 +59,37 @@ interface Certificate {
 const Navigation = () => (
     <nav className="main-nav">
         <a href="?view=personal_info">Trang chính</a>
-        <a href="?view=report">Tạo Báo cáo</a>
+        <a href="?view=report">Danh sách NV</a>
     </nav>
 );
 
 export function Report() {
-  const [title, setTitle] = useState("");
   const [allUsers, setAllUsers] = useState<ReportUser[]>([]);
-  const [selectedUserIds, setSelectedUserIds] = useState<number[]>([]);
+  const [allCertificates, setAllCertificates] = useState<Certificate[]>([]);
   const [filterDepartment, setFilterDepartment] = useState<string>("all");
-  const [shareLink, setShareLink] = useState("");
+  const [viewingUser, setViewingUser] = useState<ReportUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    async function fetchUsers() {
+    async function fetchData() {
       setIsLoading(true);
+      setError("");
       try {
-        // FIX: Added empty payload object {} to prevent potential API errors.
-        const usersForReport = await api.request("POST", "getUsersForReport", {});
+        // Fetch both users and all certificates in parallel
+        const [usersForReport, certData] = await Promise.all([
+          api.request("POST", "getUsersForReport", {}),
+          api.request("POST", "fetchCertificates", {})
+        ]);
         setAllUsers(usersForReport);
+        setAllCertificates(certData);
       } catch (err: any) {
-        setError(`Lỗi tải danh sách nhân viên: ${err.message}`);
+        setError(`Lỗi tải dữ liệu: ${err.message}`);
       } finally {
         setIsLoading(false);
       }
     }
-    fetchUsers();
+    fetchData();
   }, []);
 
   const departments = useMemo(() => {
@@ -98,69 +101,13 @@ export function Report() {
     if (filterDepartment === "all") return allUsers;
     return allUsers.filter(u => u.department === filterDepartment);
   }, [allUsers, filterDepartment]);
-  
-  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.checked) {
-        setSelectedUserIds(filteredUsers.map(u => u.id));
-    } else {
-        setSelectedUserIds([]);
-    }
-  };
-
-  const handleSelectUser = (userId: number) => {
-    setSelectedUserIds(prev =>
-      prev.includes(userId)
-        ? prev.filter(id => id !== userId)
-        : [...prev, userId]
-    );
-  };
-
-  async function createReport() {
-    if (!title.trim()) {
-        setError("Tiêu đề báo cáo không được để trống.");
-        return;
-    }
-    if (selectedUserIds.length === 0) {
-        setError("Vui lòng chọn ít nhất một nhân viên để tạo báo cáo.");
-        return;
-    }
-    setError("");
-    setIsCreating(true);
-    try {
-        const selectedUsers = allUsers.filter(u => selectedUserIds.includes(u.id));
-        const content = JSON.stringify(selectedUsers);
-
-        const data = await api.request("POST", "createReport", { title, content });
-        if (data && data.id) {
-            const link = `${window.location.origin}${window.location.pathname}?view=report-viewer&id=${data.id}`;
-            setShareLink(link);
-            setTitle("");
-            setSelectedUserIds([]);
-        }
-    } catch (err: any) {
-        console.error("Failed to create report:", err);
-        setError(`Lỗi: ${err.message || 'Không thể tạo báo cáo.'}`);
-    } finally {
-        setIsCreating(false);
-    }
-  }
 
   return (
     <>
       <Navigation />
       <div className="report-page-container">
-        <h2>Tạo báo cáo theo danh sách nhân viên</h2>
-        <div className="form-group">
-            <label htmlFor="report-title">Tiêu đề báo cáo</label>
-            <input
-                id="report-title"
-                placeholder="Ví dụ: Báo cáo tập huấn quý 3/2024"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                disabled={isCreating}
-            />
-        </div>
-
+        <h2>Danh sách nhân viên</h2>
+        
         <div className="report-filters">
             <label htmlFor="dept-filter">Lọc theo Khoa/Phòng:</label>
             <select
@@ -179,65 +126,43 @@ export function Report() {
         {isLoading ? (
             <p>Đang tải danh sách nhân viên...</p>
         ) : error ? (
-             <div className="user-selection-table-container">
+            <div className="user-selection-table-container">
                 <p className="error" style={{textAlign: 'center', padding: '20px'}}>{error}</p>
              </div>
         ) : (
-            <div className="user-selection-table-container">
-                <table className="user-selection-table">
+            <div className="report-viewer-table-container">
+                <table className="report-viewer-table">
                     <thead>
                         <tr>
-                            <th>
-                                <input 
-                                    type="checkbox"
-                                    onChange={handleSelectAll}
-                                    checked={filteredUsers.length > 0 && selectedUserIds.length === filteredUsers.length}
-                                    title="Chọn/Bỏ chọn tất cả"
-                                />
-                            </th>
                             <th>STT</th>
                             <th>Họ và Tên</th>
                             <th>Khoa/Phòng</th>
+                            <th>Hành động</th>
                         </tr>
                     </thead>
                     <tbody>
                         {filteredUsers.map((user, index) => (
                             <tr key={user.id}>
-                                <td data-label="Chọn">
-                                    <input 
-                                        type="checkbox"
-                                        checked={selectedUserIds.includes(user.id)}
-                                        onChange={() => handleSelectUser(user.id)}
-                                    />
-                                </td>
                                 <td data-label="STT">{index + 1}</td>
                                 <td data-label="Họ và Tên">{user.name}</td>
                                 <td data-label="Khoa/Phòng">{user.department}</td>
+                                <td data-label="Hành động">
+                                    <button className="btn-view" onClick={() => setViewingUser(user)}>Xem</button>
+                                </td>
                             </tr>
                         ))}
                     </tbody>
                 </table>
             </div>
         )}
-
-        {error && !isLoading && <p className="error" style={{textAlign: 'left', margin: '10px 0'}}>{error}</p>}
-        <div className="report-creation-actions">
-            <span>Đã chọn: {selectedUserIds.length} nhân viên</span>
-            <button className="btn btn-primary" onClick={createReport} disabled={isLoading || isCreating}>
-                {isCreating ? 'Đang tạo...' : 'Tạo báo cáo'}
-            </button>
-        </div>
-
-        {shareLink && (
-            <div className="share-link-container">
-                <h4>Tạo thành công!</h4>
-                <p>Link xem báo cáo: <a href={shareLink} target="_blank" rel="noopener noreferrer">{shareLink}</a></p>
-                <div style={{marginTop: '10px'}}>
-                    <QRCodeCanvas value={shareLink} size={180} />
-                </div>
-            </div>
-        )}
       </div>
+      {viewingUser && (
+        <UserDetailsModal 
+            user={viewingUser}
+            allCertificates={allCertificates}
+            onClose={() => setViewingUser(null)}
+        />
+      )}
     </>
   );
 }
