@@ -174,6 +174,103 @@
     background-color: #087a7d;
 }
 
+/* NEW: User Details Modal Styles */
+.report-viewer-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.6);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    animation: fadeIn 0.3s ease-out;
+}
+.report-viewer-modal-content {
+    background-color: var(--card-background);
+    padding: 0;
+    border-radius: var(--border-radius);
+    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+    width: 90%;
+    max-width: 700px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    animation: slideUpFadeIn 0.4s ease-out;
+}
+.report-viewer-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border-color);
+}
+.report-viewer-modal-header h3 {
+    margin: 0;
+    color: var(--primary-color);
+    font-size: 20px;
+}
+.report-viewer-modal-header .close-btn {
+    background: none;
+    border: none;
+    font-size: 28px;
+    cursor: pointer;
+    color: #6c757d;
+}
+.report-viewer-modal-body {
+    padding: 24px;
+    overflow-y: auto;
+}
+.year-selector {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 20px;
+    background-color: #f8f9fa;
+    padding: 12px;
+    border-radius: var(--border-radius);
+}
+.year-selector label {
+    font-weight: 500;
+}
+.year-selector select {
+    padding: 8px;
+    font-size: 16px;
+    border-radius: 4px;
+}
+.credits-summary {
+    margin-left: auto;
+    font-size: 16px;
+}
+.credits-summary strong {
+    font-size: 20px;
+    color: var(--secondary-color);
+    margin-left: 8px;
+}
+.details-table-container {
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    overflow: hidden;
+}
+.details-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.details-table th, .details-table td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+.details-table th {
+    background-color: var(--background-color);
+}
+.details-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+
 /* Responsive Styles */
 @media (max-width: 768px) {
     .report-page-container {
@@ -185,24 +282,25 @@
         align-items: stretch;
     }
     
-    .user-selection-table thead, .report-viewer-table thead {
+    .user-selection-table thead, .report-viewer-table thead, .details-table thead {
         display: none;
     }
 
     .user-selection-table, .user-selection-table tbody, .user-selection-table tr, .user-selection-table td,
-    .report-viewer-table, .report-viewer-table tbody, .report-viewer-table tr, .report-viewer-table td {
+    .report-viewer-table, .report-viewer-table tbody, .report-viewer-table tr, .report-viewer-table td,
+    .details-table, .details-table tbody, .details-table tr, .details-table td {
         display: block;
         width: 100%;
     }
 
-    .user-selection-table tr, .report-viewer-table tr {
+    .user-selection-table tr, .report-viewer-table tr, .details-table tr {
         margin-bottom: 15px;
         border: 1px solid var(--border-color);
         border-radius: var(--border-radius);
         padding: 10px;
     }
     
-    .user-selection-table td, .report-viewer-table td {
+    .user-selection-table td, .report-viewer-table td, .details-table td {
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -210,11 +308,11 @@
         padding: 10px 0;
         border-bottom: 1px solid #eee;
     }
-    .user-selection-table td:last-child, .report-viewer-table td:last-child {
+    .user-selection-table td:last-child, .report-viewer-table td:last-child, .details-table td:last-child {
         border-bottom: none;
     }
 
-    .user-selection-table td:before, .report-viewer-table td:before {
+    .user-selection-table td:before, .report-viewer-table td:before, .details-table td:before {
         content: attr(data-label);
         font-weight: bold;
         text-align: left;
@@ -241,5 +339,9 @@
     .report-viewer-table td:nth-of-type(2):before { content: "Họ và Tên"; }
     .report-viewer-table td:nth-of-type(3):before { content: "Khoa/Phòng"; }
     .report-viewer-table td:nth-of-type(4):before { content: "Hành động"; }
+    
+    .details-table td:nth-of-type(1):before { content: "STT"; }
+    .details-table td:nth-of-type(2):before { content: "Tên chứng chỉ"; }
+    .details-table td:nth-of-type(3):before { content: "Số tiết"; }
 
 }

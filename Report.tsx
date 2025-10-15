@@ -43,6 +43,19 @@ interface ReportUser {
     department: string;
 }
 
+interface Certificate {
+  id: number;
+  userId: number;
+  name: string;
+  date: string;
+  credits: number;
+  image: string;
+  imageId: string;
+  updatedAt?: string;
+  imageOrientation?: number;
+}
+
+
 const Navigation = () => (
     <nav className="main-nav">
         <a href="?view=personal_info">Trang chính</a>
@@ -64,7 +77,8 @@ export function Report() {
     async function fetchUsers() {
       setIsLoading(true);
       try {
-        const usersForReport = await api.request("POST", "getUsersForReport");
+        // FIX: Added empty payload object {} to prevent potential API errors.
+        const usersForReport = await api.request("POST", "getUsersForReport", {});
         setAllUsers(usersForReport);
       } catch (err: any) {
         setError(`Lỗi tải danh sách nhân viên: ${err.message}`);
@@ -164,6 +178,10 @@ export function Report() {
 
         {isLoading ? (
             <p>Đang tải danh sách nhân viên...</p>
+        ) : error ? (
+             <div className="user-selection-table-container">
+                <p className="error" style={{textAlign: 'center', padding: '20px'}}>{error}</p>
+             </div>
         ) : (
             <div className="user-selection-table-container">
                 <table className="user-selection-table">
@@ -185,16 +203,16 @@ export function Report() {
                     <tbody>
                         {filteredUsers.map((user, index) => (
                             <tr key={user.id}>
-                                <td>
+                                <td data-label="Chọn">
                                     <input 
                                         type="checkbox"
                                         checked={selectedUserIds.includes(user.id)}
                                         onChange={() => handleSelectUser(user.id)}
                                     />
                                 </td>
-                                <td>{index + 1}</td>
-                                <td>{user.name}</td>
-                                <td>{user.department}</td>
+                                <td data-label="STT">{index + 1}</td>
+                                <td data-label="Họ và Tên">{user.name}</td>
+                                <td data-label="Khoa/Phòng">{user.department}</td>
                             </tr>
                         ))}
                     </tbody>
@@ -202,7 +220,7 @@ export function Report() {
             </div>
         )}
 
-        {error && <p className="error" style={{textAlign: 'left', margin: '10px 0'}}>{error}</p>}
+        {error && !isLoading && <p className="error" style={{textAlign: 'left', margin: '10px 0'}}>{error}</p>}
         <div className="report-creation-actions">
             <span>Đã chọn: {selectedUserIds.length} nhân viên</span>
             <button className="btn btn-primary" onClick={createReport} disabled={isLoading || isCreating}>
@@ -224,14 +242,77 @@ export function Report() {
   );
 }
 
+
+const UserDetailsModal = ({ user, allCertificates, onClose }: { user: ReportUser, allCertificates: Certificate[], onClose: () => void }) => {
+    const userCerts = useMemo(() => allCertificates.filter(c => c.userId === user.id), [allCertificates, user.id]);
+    const availableYears = useMemo(() => [...new Set(userCerts.map(c => new Date(c.date).getFullYear()))].sort((a, b) => b - a), [userCerts]);
+    const [selectedYear, setSelectedYear] = useState<number | null>(availableYears.length > 0 ? availableYears[0] : null);
+
+    const certsForYear = useMemo(() => selectedYear ? userCerts.filter(c => new Date(c.date).getFullYear() === selectedYear) : [], [userCerts, selectedYear]);
+    const totalCreditsForYear = useMemo(() => certsForYear.reduce((sum, cert) => sum + Number(cert.credits || 0), 0), [certsForYear]);
+
+    return (
+        <div className="report-viewer-modal-overlay" onClick={onClose}>
+            <div className="report-viewer-modal-content" onClick={(e) => e.stopPropagation()}>
+                <div className="report-viewer-modal-header">
+                    <h3>Chi tiết chứng chỉ của {user.name}</h3>
+                    <button className="close-btn" onClick={onClose}>&times;</button>
+                </div>
+                <div className="report-viewer-modal-body">
+                    <div className="year-selector">
+                        <label htmlFor="cert-year">Chọn năm:</label>
+                        <select id="cert-year" value={selectedYear || ''} onChange={e => setSelectedYear(Number(e.target.value))}>
+                             {availableYears.map(year => <option key={year} value={year}>{year}</option>)}
+                        </select>
+                        <div className="credits-summary">
+                            <span>Tổng tiết:</span>
+                            <strong>{Number.isInteger(totalCreditsForYear) ? totalCreditsForYear : totalCreditsForYear.toFixed(1)}</strong>
+                        </div>
+                    </div>
+
+                    <div className="details-table-container">
+                        <table className="details-table">
+                             <thead>
+                                <tr>
+                                    <th>STT</th>
+                                    <th>Tên chứng chỉ</th>
+                                    <th>Số tiết</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {certsForYear.length > 0 ? (
+                                    certsForYear.map((cert, index) => (
+                                        <tr key={cert.id}>
+                                            <td data-label="STT">{index + 1}</td>
+                                            <td data-label="Tên chứng chỉ">{cert.name}</td>
+                                            <td data-label="Số tiết">{cert.credits}</td>
+                                        </tr>
+                                    ))
+                                ) : (
+                                    <tr>
+                                        <td colSpan={3} style={{textAlign: 'center'}}>Không có chứng chỉ nào trong năm {selectedYear}.</td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+
 export function ReportViewer({ id }: { id: string }) {
     const [report, setReport] = useState<{title: string, content: string} | null>(null);
     const [reportUsers, setReportUsers] = useState<ReportUser[]>([]);
+    const [allCertificates, setAllCertificates] = useState<Certificate[]>([]);
+    const [viewingUser, setViewingUser] = useState<ReportUser | null>(null);
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
-        const fetchReport = async () => {
+        const fetchReportAndCerts = async () => {
             if (!id) {
                 setError('Không có ID báo cáo.');
                 setIsLoading(false);
@@ -239,22 +320,28 @@ export function ReportViewer({ id }: { id: string }) {
             };
             setIsLoading(true);
             try {
-                const data = await api.request('POST', 'getReport', { id });
-                setReport(data);
+                const [reportData, certData] = await Promise.all([
+                    api.request('POST', 'getReport', { id }),
+                    api.request('POST', 'fetchCertificates', {})
+                ]);
+
+                setReport(reportData);
+                setAllCertificates(certData);
+
                 // Parse content to get users
-                if (data.content) {
-                    const parsedUsers = JSON.parse(data.content);
+                if (reportData.content) {
+                    const parsedUsers = JSON.parse(reportData.content);
                     if (Array.isArray(parsedUsers)) {
                         setReportUsers(parsedUsers);
                     }
                 }
             } catch (err: any) {
-                setError(err.message || 'Không thể tải báo cáo.');
+                setError(err.message || 'Không thể tải báo cáo hoặc danh sách chứng chỉ.');
             } finally {
                 setIsLoading(false);
             }
         };
-        fetchReport();
+        fetchReportAndCerts();
     }, [id]);
 
     const renderContent = () => {
@@ -278,10 +365,12 @@ export function ReportViewer({ id }: { id: string }) {
                         <tbody>
                             {reportUsers.map((user, index) => (
                                 <tr key={user.id}>
-                                    <td>{index + 1}</td>
-                                    <td>{user.name}</td>
-                                    <td>{user.department}</td>
-                                    <td><button className="btn-view" onClick={() => alert(`Xem chi tiết cho: ${user.name}`)}>Xem</button></td>
+                                    <td data-label="STT">{index + 1}</td>
+                                    <td data-label="Họ và Tên">{user.name}</td>
+                                    <td data-label="Khoa/Phòng">{user.department}</td>
+                                    <td data-label="Hành động">
+                                        <button className="btn-view" onClick={() => setViewingUser(user)}>Xem</button>
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>
@@ -297,6 +386,13 @@ export function ReportViewer({ id }: { id: string }) {
             <div className="report-page-container">
                 {renderContent()}
             </div>
+            {viewingUser && (
+                <UserDetailsModal 
+                    user={viewingUser}
+                    allCertificates={allCertificates}
+                    onClose={() => setViewingUser(null)}
+                />
+            )}
         </>
     );
 }
