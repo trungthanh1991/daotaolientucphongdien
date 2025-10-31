@@ -3,14 +3,14 @@ import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 // Your web app's Firebase configuration
-const firebaseConfig = {
-  apiKey: "AIzaSyBRGDuQG-Nln-xwdezcGXlYIdyp-qWUZPk",
-  authDomain: "dtltpdien.firebaseapp.com",
-  projectId: "dtltpdien",
-  storageBucket: "dtltpdien.firebasestorage.app",
-  messagingSenderId: "571071073763",
-  appId: "1:571071073763:web:f9bd296c8bc8eed876e4d6",
-  measurementId: "G-Z8L5QNSL95"
+const firebaseConfig = { 
+  apiKey : "AIzaSyCmWDep7GDYQlerzPsumy8S6eUIhhLbE80" , 
+  authDomain : "dtltpdien-e49e4.firebaseapp.com" , 
+  projectId : "dtltpdien-e49e4" , 
+  storageBucket : "dtltpdien-e49e4.appspot.com" , 
+  messagingSenderId : "279733704965" , 
+  appId : "1:279733704965:web:fb90e63b82a56a8ed0bf6c" , 
+  measurementId : "G-QMCK63H8XY" 
 };
 
 // Initialize Firebase

@@ -17,6 +17,11 @@ export const blobToBase64 = (blob: Blob): Promise<string> => {
   });
 };
 
+// Centralized configuration for the Apps Script backend
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwNArRXXFCQyRPgsT8f9ymliqSR1_sWHNF8ThTH7cLrWz9C-ro_acYLZDIUVHkQVwEzkw/exec";
+const API_TOKEN = "Thamhoa@12345"; // Must match Script Property 'API_TOKEN' in Code.gs
+
+
 /****************************************
  * 🚀 Upload to Google Drive (via Apps Script)
  ****************************************/
@@ -24,13 +29,6 @@ export const uploadToDrive = async (
   file: Blob,
   username: string
 ): Promise<{ success: boolean; id?: string; url?: string; error?: string }> => {
-  // ✅ Must match Script Property 'API_TOKEN' in Code.gs
-  const API_TOKEN = "Thamhoa@12345";
-
-  // ✅ Dùng URL dạng /exec (Deploy → Web App → Anyone)
-  const SCRIPT_URL =
-    "https://script.google.com/macros/s/AKfycbwNArRXXFCQyRPgsT8f9ymliqSR1_sWHNF8ThTH7cLrWz9C-ro_acYLZDIUVHkQVwEzkw/exec";
-
   try {
     const base64Data = await blobToBase64(file);
 
@@ -42,7 +40,7 @@ export const uploadToDrive = async (
       mimeType: file.type,
     };
 
-    // ✅ Dùng text/plain để tránh preflight CORS
+    // Use text/plain to avoid preflight CORS
     const res = await fetch(SCRIPT_URL, {
       method: "POST",
       headers: {
@@ -78,9 +76,6 @@ export const uploadToDrive = async (
 export const deleteFromDrive = async (
   fileId: string
 ): Promise<{ success: boolean; error?: string }> => {
-  const API_TOKEN = "Thamhoa@12345";
-  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwNArRXXFCQyRPgsT8f9ymliqSR1_sWHNF8ThTH7cLrWz9C-ro_acYLZDIUVHkQVwEzkw/exec";
-
   try {
     const payload = {
       token: API_TOKEN,
