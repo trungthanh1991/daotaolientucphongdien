@@ -1,0 +1,7 @@
+{
+  "name": "DTLTPD",
+  "description": "Dao tao lien tuc PD",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Xem Báo cáo - Hệ thống Quản lý Đào tạo Liên tục</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      html { font-size: 16px; }
+      @media print {
+          @page { size: A4 landscape; margin: 1cm; }
+          body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .no-print { display: none !important; }
+          #report-content, #report-content * { visibility: visible; }
+          #report-content {
+              position: absolute; left: 0; top: 0; width: 100%;
+              padding: 0 !important; margin: 0 !important;
+          }
+          table { font-size: 9pt !important; width: 100% !important; border-collapse: collapse !important; }
+          thead { display: table-header-group !important; }
+          tbody, tr { page-break-inside: avoid !important; }
+      }
+    </style>
+    <script type="importmap">
+    {
+      "imports": {
+        "react/": "https://aistudiocdn.com/react@^19.2.0/",
+        "react": "https://aistudiocdn.com/react@^19.2.0",
+        "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+        "firebase/app": "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js",
+        "firebase/firestore": "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js"
+      }
+    }
+    </script>
+</head>
+<body class="bg-slate-100 font-sans">
+    <div id="root"></div>
+    <script type="module" src="/share.tsx"></script>
+</body>
+</html>
