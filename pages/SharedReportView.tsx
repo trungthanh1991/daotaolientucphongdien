@@ -1,8 +1,14 @@
-import React, { useState, useEffect, useMemo, ReactNode } from 'react';
+import React, { useState, useEffect, useMemo, ReactNode, useRef } from 'react';
 import { db } from '../firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import PrintIcon from '../components/icons/PrintIcon';
 import CertificateDetailModal from '../components/CertificateDetailModal';
+import { GoogleGenAI } from '@google/genai';
+import AIAssistantIcon from '../components/icons/AIAssistantIcon';
+import SendIcon from '../components/icons/SendIcon';
+import UserIcon from '../components/icons/UserIcon';
+import CloseIcon from '../components/icons/CloseIcon';
+
 
 // Interfaces
 interface ComplianceReportRow { id: string; name: string; title: string; totalCredits: number; requirement: number; status: 'Đã đạt' | 'Chưa đạt'; }
@@ -27,6 +33,11 @@ interface SharedReportData {
     token?: string;
 }
 
+interface Message {
+  sender: 'user' | 'ai';
+  text: string;
+}
+
 interface SharedReportViewProps {
     shareId: string;
 }
@@ -37,8 +48,16 @@ const SharedReportView: React.FC<SharedReportViewProps> = ({ shareId }) => {
     const [error, setError] = useState<string | null>(null);
     const [detailModalUser, setDetailModalUser] = useState<SummaryWithDetailsRow | null>(null);
 
+    // AI State
+    const [geminiApiKey, setGeminiApiKey] = useState<string | null>(null);
+    const [isAiChatOpen, setIsAiChatOpen] = useState(false);
+    const [messages, setMessages] = useState<Message[]>([]);
+    const [aiInput, setAiInput] = useState('');
+    const [isAiLoading, setIsAiLoading] = useState(false);
+    const chatEndRef = useRef<HTMLDivElement | null>(null);
+
     useEffect(() => {
-        const fetchReport = async () => {
+        const fetchDependencies = async () => {
             const urlParams = new URLSearchParams(window.location.search);
             const urlToken = urlParams.get('token');
 
@@ -49,9 +68,24 @@ const SharedReportView: React.FC<SharedReportViewProps> = ({ shareId }) => {
             }
 
             try {
+                // Fetch report and API key in parallel
                 const reportRef = doc(db, 'SharedReports', shareId);
-                const reportSnap = await getDoc(reportRef);
+                const reportPromise = getDoc(reportRef);
+                
+                const keyCollection = collection(db, 'KeyGemini');
+                const keyPromise = getDocs(keyCollection);
 
+                const [reportSnap, keySnapshot] = await Promise.all([reportPromise, keyPromise]);
+
+                // Process API Key
+                if (!keySnapshot.empty) {
+                    const keyDoc = keySnapshot.docs[0];
+                    setGeminiApiKey(keyDoc.data().key);
+                } else {
+                    console.warn("No Gemini API Key found in Firestore.");
+                }
+
+                // Process Report Data
                 if (!reportSnap.exists()) {
                     setError("Báo cáo không tồn tại hoặc đã bị xóa.");
                     setLoading(false);
@@ -74,7 +108,6 @@ const SharedReportView: React.FC<SharedReportViewProps> = ({ shareId }) => {
                 
                 setReport(data);
 
-                // Hide token from URL after successful validation
                 if (urlToken) {
                     const newUrl = new URL(window.location.href);
                     newUrl.searchParams.delete('token');
@@ -88,8 +121,14 @@ const SharedReportView: React.FC<SharedReportViewProps> = ({ shareId }) => {
             }
         };
 
-        fetchReport();
+        fetchDependencies();
     }, [shareId]);
+
+    useEffect(() => {
+        if (isAiChatOpen) {
+            chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }
+    }, [messages, isAiLoading, isAiChatOpen]);
 
     const { headers, data, reportType } = useMemo(() => {
         if (!report) return { headers: {}, data: [], reportType: '' };
@@ -104,6 +143,55 @@ const SharedReportView: React.FC<SharedReportViewProps> = ({ shareId }) => {
             return { headers: {}, data: [], reportType: '' };
         }
     }, [report]);
+
+    const formatResponse = (text: string) => {
+        return text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                   .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                   .replace(/\n/g, '<br />');
+    };
+
+    const handleSendMessage = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!aiInput.trim() || isAiLoading || !report) return;
+
+        const userMessage: Message = { sender: 'user', text: aiInput.trim() };
+        setMessages(prev => [...prev, userMessage]);
+        setAiInput('');
+        setIsAiLoading(true);
+
+        if (!geminiApiKey) {
+            const errorMessage: Message = { sender: 'ai', text: 'Lỗi: Không thể kết nối với Trợ lý AI. Vui lòng liên hệ quản trị viên.' };
+            setMessages(prev => [...prev, errorMessage]);
+            setIsAiLoading(false);
+            return;
+        }
+
+        try {
+            const simplifiedData = data.map((row: any) => {
+                const { id, certificates, departmentId, titleId, ...rest } = row;
+                return rest;
+            }).slice(0, 50); // Limit data to avoid token limit issues
+
+            const context = `Dữ liệu báo cáo:\n- Tên báo cáo: ${report.reportTitle}\n- Dữ liệu (tối đa 50 dòng đầu): ${JSON.stringify(simplifiedData)}`;
+            const prompt = `Bạn là một trợ lý AI thông minh, chuyên phân tích và trả lời các câu hỏi về dữ liệu báo cáo đào tạo liên tục. Chỉ sử dụng dữ liệu được cung cấp sau đây để trả lời. Hãy trả lời một cách ngắn gọn, chính xác bằng tiếng Việt.\n${context}\nCâu hỏi của người dùng: ${userMessage.text}`;
+
+            const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+            const response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: prompt,
+            });
+
+            const aiMessage: Message = { sender: 'ai', text: response.text };
+            setMessages(prev => [...prev, aiMessage]);
+        } catch (error) {
+            console.error("Gemini API error:", error);
+            const errorMessage: Message = { sender: 'ai', text: 'Rất tiếc, đã xảy ra lỗi khi xử lý yêu cầu. Vui lòng thử lại sau.' };
+            setMessages(prev => [...prev, errorMessage]);
+        } finally {
+            setIsAiLoading(false);
+        }
+    };
+
 
     const renderCellContent = (row: ReportRow, key: string): ReactNode => {
         if (key === 'actions' && reportType === 'summary_with_details') {
@@ -196,7 +284,6 @@ const SharedReportView: React.FC<SharedReportViewProps> = ({ shareId }) => {
         if (reportType === 'detail') {
             return (
               <>
-                {/* Mobile View: Card-based Layout */}
                 <div className="md:hidden space-y-4">
                     {(data as DetailedReportRow[]).map((userRow, userIndex) => (
                         <div key={userRow.id} className="bg-white rounded-lg shadow-md overflow-hidden border border-gray-200">
@@ -215,8 +302,6 @@ const SharedReportView: React.FC<SharedReportViewProps> = ({ shareId }) => {
                         </div>
                     ))}
                 </div>
-
-                {/* Desktop View: Table Layout */}
                 <div className="hidden md:block overflow-x-auto">
                     <table className="min-w-full bg-white border border-gray-300 border-collapse">
                         <thead className="bg-gray-50">
@@ -301,6 +386,85 @@ const SharedReportView: React.FC<SharedReportViewProps> = ({ shareId }) => {
                     onClose={() => setDetailModalUser(null)}
                 />
             )}
+             {!isAiChatOpen && (
+                <button
+                    onClick={() => setIsAiChatOpen(true)}
+                    className="no-print fixed bottom-6 right-6 bg-indigo-600 text-white rounded-full p-4 shadow-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transform transition-transform hover:scale-110"
+                    aria-label="Mở Trợ lý AI"
+                >
+                    <AIAssistantIcon className="h-7 w-7" />
+                </button>
+            )}
+            {isAiChatOpen && (
+                <div className="no-print fixed inset-0 bg-black bg-opacity-50 flex flex-col justify-end z-50 animate-fade-in">
+                    <div className="bg-white w-full max-w-2xl mx-auto h-[85vh] max-h-[700px] rounded-t-2xl shadow-2xl flex flex-col">
+                        <header className="p-4 border-b border-gray-200 flex justify-between items-center flex-shrink-0">
+                            <div className="flex items-center gap-3">
+                                <AIAssistantIcon className="h-6 w-6 text-indigo-600" />
+                                <h2 className="text-lg font-bold text-gray-800">Trợ lý AI Báo cáo</h2>
+                            </div>
+                            <button onClick={() => setIsAiChatOpen(false)} className="text-gray-400 hover:text-gray-600">
+                                <CloseIcon className="h-6 w-6" />
+                            </button>
+                        </header>
+                        <main className="flex-1 p-4 overflow-y-auto bg-gray-50">
+                            <div className="space-y-6">
+                                <div className="flex items-start gap-3 justify-start">
+                                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center">
+                                      <AIAssistantIcon className="w-5 h-5 text-indigo-600" />
+                                    </div>
+                                    <div className="max-w-lg p-3 rounded-xl shadow-sm bg-white text-gray-800 rounded-bl-none border">
+                                      <p className="text-base">Xin chào! Tôi có thể giúp gì cho bạn về báo cáo này?</p>
+                                    </div>
+                                </div>
+                                {messages.map((msg, index) => (
+                                    <div key={index} className={`flex items-start gap-3 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                        {msg.sender === 'ai' && <div className="flex-shrink-0 w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center"><AIAssistantIcon className="w-5 h-5 text-indigo-600" /></div>}
+                                        <div className={`max-w-lg p-3 rounded-xl shadow-sm ${msg.sender === 'user' ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-white text-gray-800 rounded-bl-none border'}`}>
+                                            <p className="text-base" dangerouslySetInnerHTML={{ __html: formatResponse(msg.text) }} />
+                                        </div>
+                                        {msg.sender === 'user' && <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center"><UserIcon className="w-5 h-5 text-gray-600" /></div>}
+                                    </div>
+                                ))}
+                                {isAiLoading && (
+                                     <div className="flex items-start gap-3 justify-start">
+                                       <div className="flex-shrink-0 w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center"><AIAssistantIcon className="w-5 h-5 text-indigo-600" /></div>
+                                       <div className="max-w-lg p-3 rounded-xl shadow-sm bg-white text-gray-800 rounded-bl-none border">
+                                         <div className="flex items-center space-x-2">
+                                           <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse"></div>
+                                           <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse [animation-delay:0.2s]"></div>
+                                           <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse [animation-delay:0.4s]"></div>
+                                         </div>
+                                       </div>
+                                     </div>
+                                )}
+                                <div ref={chatEndRef} />
+                            </div>
+                        </main>
+                        <footer className="p-4 border-t border-gray-200 flex-shrink-0">
+                            <form onSubmit={handleSendMessage} className="flex items-center gap-3">
+                                <input
+                                    type="text" value={aiInput} onChange={(e) => setAiInput(e.target.value)}
+                                    placeholder="Đặt câu hỏi về báo cáo..." disabled={isAiLoading}
+                                    className="flex-1 w-full px-4 py-2 border border-gray-300 rounded-full shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition disabled:bg-gray-100"
+                                    aria-label="Chat input"
+                                />
+                                <button
+                                    type="submit" disabled={isAiLoading || !aiInput.trim()}
+                                    className="flex-shrink-0 w-10 h-10 flex items-center justify-center bg-indigo-600 text-white rounded-full hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors duration-200 disabled:bg-indigo-400 disabled:cursor-not-allowed"
+                                    aria-label="Send message"
+                                >
+                                    <SendIcon className="w-5 h-5" />
+                                </button>
+                            </form>
+                        </footer>
+                    </div>
+                </div>
+            )}
+            <style>{`
+              @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+              .animate-fade-in { animation: fade-in 0.3s ease-out forwards; }
+            `}</style>
         </div>
     );
 };

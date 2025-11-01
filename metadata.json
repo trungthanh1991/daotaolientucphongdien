@@ -1,6 +1,6 @@
 {
-  "name": "DTLTPD",
-  "description": "Phong dien",
+  "name": "DTLTPD 1",
+  "description": "Ban Phong dien test AI trên trang share QR",
   "requestFramePermissions": [
     "camera"
   ]
